@@ -103,10 +103,13 @@ async fn combine(
     }
 }
 
-pub(crate) fn merge(presence: &mut Value, activity: Option<&Value>) {
+/// Puts what this session shows in `presence`, in the order Discord's client
+/// sends it: the custom status, the game, the music.
+pub(crate) fn merge(presence: &mut Value, game: Option<&Value>, music: Option<&Value>) {
     if let Some(activities) = presence["activities"].as_array_mut() {
         activities.retain(|value| value["type"] == 4);
-        activities.extend(activity.cloned());
+        activities.extend(game.cloned());
+        activities.extend(music.cloned());
     }
 }
 
@@ -139,6 +142,22 @@ mod tests {
         drop(receiver);
         worker.await.unwrap();
         assert!(detected.is_closed());
+    }
+
+    #[test]
+    fn merging_keeps_the_custom_status_and_takes_the_game_and_music_in_turn() {
+        let status = json!({"type": 4, "name": "Custom Status", "state": "tea"});
+        let game = json!({"type": 0, "name": "Game"});
+        let song = json!({"type": 2, "name": "Spotify"});
+        let mut presence = json!({"status": "online", "activities": [status]});
+        merge(&mut presence, Some(&game), Some(&song));
+        assert_eq!(presence["activities"], json!([status, game, song]));
+        merge(&mut presence, Some(&game), None);
+        assert_eq!(presence["activities"], json!([status, game]));
+        merge(&mut presence, None, Some(&song));
+        assert_eq!(presence["activities"], json!([status, song]));
+        merge(&mut presence, None, None);
+        assert_eq!(presence["activities"], json!([status]));
     }
 
     #[test]

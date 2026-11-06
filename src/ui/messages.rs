@@ -643,6 +643,25 @@ pub(super) fn message_row(message: &ChatMessage, revealed: &HashSet<String>) -> 
         color: role_color(message.color),
         has_color: message.color.is_some(),
         bot: message.bot,
+        name_font: super::profile::name_font(message.name_style.as_ref()),
+        name_weight: super::profile::name_weight(message.name_style.as_ref()),
+        name_spacing: super::profile::name_spacing(message.name_style.as_ref()),
+        name_effect: super::profile::name_effect(message.name_style.as_ref()),
+        name_paint: super::profile::name_paint(message.name_style.as_ref()),
+        has_name_style: message.name_style.is_some(),
+        has_name_paint: super::profile::has_name_paint(message.name_style.as_ref()),
+        tag_text: message
+            .tag
+            .as_ref()
+            .map(|tag| tag.text.as_str())
+            .unwrap_or_default()
+            .into(),
+        tag_icon: message
+            .tag
+            .as_ref()
+            .and_then(|tag| tag.badge.as_deref())
+            .unwrap_or_default()
+            .into(),
         initial: initial(&message.author),
         tint: tint(&message.author),
         // Virtualized avatars resolve their URLs when their components are built.

@@ -54,6 +54,7 @@ mod server_settings;
 pub use channels::Channels;
 pub use commands::{command, finished, live};
 pub use open_channel::{Load, OpenChannel};
+pub(crate) use render::{chat_name_style, chat_tag};
 
 /// Discord's message length limit without Nitro, in characters.
 pub const MAX_CHARS: usize = 2000;

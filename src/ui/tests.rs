@@ -618,6 +618,79 @@ fn the_renderer_setting_is_remembered() {
 }
 
 #[test]
+fn side_panel_settings_start_as_they_come_and_are_remembered() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = tempfile::tempdir().unwrap();
+    let window = YapfastWindow::new().unwrap();
+    let adapter = Adapter::new(
+        Arc::new(BackgroundRuntime::new().unwrap()),
+        directory.path().into(),
+        &window,
+    )
+    .unwrap();
+    bind_callbacks(&window, &adapter);
+    // Missing from layout.json, they take their defaults: no folding.
+    let looks = window.global::<Looks>();
+    assert!(!looks.get_fold_channels() && !looks.get_fold_members());
+    assert_eq!(looks.get_unroll_delay(), 120);
+    assert_eq!(looks.get_fold_delay(), 300);
+    assert!(looks.get_unrolled_shadow() && looks.get_folded_unread() && looks.get_folded_voice());
+    assert!(looks.get_folded_server() && looks.get_folded_dock() && looks.get_pin_button());
+    looks.set_unroll_delay(450);
+    looks.set_fold_delay(0);
+    looks.set_unrolled_shadow(false);
+    looks.set_folded_unread(false);
+    looks.set_folded_voice(false);
+    looks.set_folded_server(false);
+    looks.set_folded_dock(false);
+    looks.set_pin_button(false);
+    window.invoke_preferences_changed();
+    let saved = Layout::read(directory.path());
+    assert_eq!((saved.unroll_delay, saved.fold_delay), (Some(450), Some(0)));
+    assert_eq!(saved.unrolled_shadow, Some(false));
+    // A new start shows them as they were left.
+    let again = YapfastWindow::new().unwrap();
+    saved.apply(&again);
+    let looks = again.global::<Looks>();
+    assert_eq!((looks.get_unroll_delay(), looks.get_fold_delay()), (450, 0));
+    assert!(
+        !looks.get_unrolled_shadow() && !looks.get_folded_unread() && !looks.get_folded_voice()
+    );
+    assert!(!looks.get_folded_server() && !looks.get_folded_dock() && !looks.get_pin_button());
+    // Delays out of the sliders' range come back within it.
+    Layout {
+        unroll_delay: Some(5000),
+        fold_delay: Some(-20),
+        ..Default::default()
+    }
+    .apply(&again);
+    assert_eq!(
+        (looks.get_unroll_delay(), looks.get_fold_delay()),
+        (1000, 0)
+    );
+}
+
+#[test]
+fn a_pinned_channel_list_stays_unrolled_and_snaps_without_animations() {
+    i_slint_backend_testing::init_no_event_loop();
+    let window = YapfastWindow::new().unwrap();
+    let looks = window.global::<Looks>();
+    looks.set_animations(false);
+    window.set_workspace(true);
+    // Folding is off unless turned on.
+    assert_eq!(window.get_sidebar_fold(), 0.0);
+    looks.set_fold_channels(true);
+    assert_eq!(window.get_sidebar_fold(), 1.0, "folded to its sliver");
+    window.set_sidebar_pinned(true);
+    assert_eq!(window.get_sidebar_fold(), 0.0, "unrolled at once");
+    window.set_sidebar_pinned(false);
+    assert_eq!(window.get_sidebar_fold(), 1.0);
+    // Not folding, the pin changes nothing.
+    looks.set_fold_channels(false);
+    assert_eq!(window.get_sidebar_fold(), 0.0);
+}
+
+#[test]
 fn custom_games_are_remembered_and_edited_in_place() {
     i_slint_backend_testing::init_no_event_loop();
     let directory = tempfile::tempdir().unwrap();
@@ -3266,6 +3339,7 @@ fn a_folder_on_the_rail_holds_its_servers_until_opened() {
             hide_muted: false,
             community: false,
             pinned: Vec::new(),
+            tag: None,
         }
     };
     let mut state = AppState::default();
@@ -3393,7 +3467,7 @@ fn a_profile_shows_activities_as_discord_cards() {
     ]));
     let rows: Vec<ActivityRow> = profile::activity_rows(&activities).iter().collect();
     let spotify = &rows[0];
-    assert_eq!(spotify.heading, "LISTENING TO SPOTIFY");
+    assert_eq!(spotify.heading, "Listening to Spotify");
     assert_eq!(
         (
             spotify.name.as_str(),
@@ -3422,6 +3496,7 @@ fn friends_in_a_servers_voice_channel_show_where() {
         ..Default::default()
     };
     let room = |id: &str, voice: bool, direct: bool, people: Vec<VoicePerson>| ChatRoom {
+        tag: None,
         id: id.into(),
         network: Network::Discord,
         capabilities: Network::Discord.capabilities(),
@@ -3477,6 +3552,7 @@ fn friends_in_a_servers_voice_channel_show_where() {
         hide_muted: false,
         community: false,
         pinned: Vec::new(),
+        tag: None,
     })];
     let rooms_by_id = state
         .rooms
@@ -3518,6 +3594,7 @@ fn a_call_shows_on_its_servers_icon_and_its_closed_folder() {
             hide_muted: false,
             community: false,
             pinned: Vec::new(),
+            tag: None,
         }
     };
     let mut state = AppState::default();
@@ -6115,6 +6192,7 @@ fn requests_list_someone_once_with_their_message() {
         spam,
     };
     let room = |id: &str, person: &str, category: &str| ChatRoom {
+        tag: None,
         id: id.into(),
         network: Network::Discord,
         capabilities: Network::Discord.capabilities(),
@@ -6867,5 +6945,44 @@ fn dragging_the_gif_pickers_left_edge_widens_it_no_further_than_the_server_list(
     release(0.);
     assert_eq!(window.get_gif_picker_width(), room);
     assert_eq!(right_edge(), 1058.);
+    window.hide().unwrap();
+}
+
+#[test]
+fn the_member_lists_pin_sits_at_its_top_right_and_keeps_it_unrolled() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = tempfile::tempdir().unwrap();
+    let window = YapfastWindow::new().unwrap();
+    let adapter = Adapter::new(
+        Arc::new(BackgroundRuntime::new().unwrap()),
+        directory.path().into(),
+        &window,
+    )
+    .unwrap();
+    bind_callbacks(&window, &adapter);
+    window.invoke_explore_preview();
+    window.show().unwrap();
+    window
+        .window()
+        .set_size(slint::LogicalSize::new(1120., 760.));
+    let looks = window.global::<Looks>();
+    looks.set_animations(false);
+    looks.set_fold_members(true);
+    let click = |x, y| {
+        let position = slint::LogicalPosition::new(x, y);
+        let button = slint::platform::PointerEventButton::Left;
+        let window = window.window();
+        window.dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+        window.dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button });
+        window.dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button });
+    };
+    window.set_members_pinned(true);
+    // Unrolled, its pin is a 28px button 8px in from the right, just under
+    // the conversation's 48px header; further down, the same column is the
+    // list's own.
+    click(1098., 400.);
+    assert!(window.get_members_pinned());
+    click(1098., 68.);
+    assert!(!window.get_members_pinned());
     window.hide().unwrap();
 }

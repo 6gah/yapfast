@@ -36,6 +36,14 @@ pub struct ListedMember {
     pub activities: Activities,
     /// Their roles' ids, shared with [`Names`]; empty outside a server.
     pub roles: Arc<[String]>,
+    /// Owns the group DM this lists, which marks them with a crown.
+    pub owner: bool,
+    /// The server tag beside their name.
+    pub tag: Option<crate::ready::ServerTag>,
+    /// The picture behind their row.
+    pub nameplate: Option<crate::ready::Nameplate>,
+    /// How they styled their name.
+    pub name_style: Option<crate::ready::NameStyle>,
     /// When their timeout ends, in Unix milliseconds, while they're timed
     /// out as far as Yapfast knows.
     pub timed_out_until: Option<u64>,
@@ -82,6 +90,12 @@ impl Presence {
 struct Person {
     /// Shared with [`Names`] while it knows them.
     roles: Arc<[String]>,
+    #[serde(default)]
+    tag: Option<crate::ready::ServerTag>,
+    #[serde(default)]
+    nameplate: Option<crate::ready::Nameplate>,
+    #[serde(default)]
+    name_style: Option<crate::ready::NameStyle>,
     presence: Presence,
     activity: Option<String>,
     /// Not saved: a game is over by the next start, and the line above
@@ -172,6 +186,22 @@ impl MemberList {
     /// Whether it lists `user`.
     pub fn lists(&self, user: &str) -> bool {
         self.people.contains_key(user)
+    }
+
+    /// Takes in the server tag and name style of a user object, as
+    /// USER_UPDATE brings them, for those it carries. Says whether it lists
+    /// the user.
+    pub fn user_changed(&mut self, user: &Value) -> bool {
+        let Some(person) = user["id"].as_str().and_then(|id| self.people.get_mut(id)) else {
+            return false;
+        };
+        if user.get("primary_guild").is_some() {
+            person.tag = crate::ready::server_tag(user);
+        }
+        if user.get("display_name_styles").is_some() {
+            person.name_style = crate::ready::name_style(user);
+        }
+        true
     }
 
     /// Whether Discord has sent the list yet.
@@ -301,6 +331,7 @@ impl MemberList {
                         person.roles = roles;
                     }
                     members.push(ListedMember {
+                        owner: false,
                         user_id: user.clone(),
                         name: names
                             .name(&self.guild, user)
@@ -317,6 +348,9 @@ impl MemberList {
                         activity: person.activity,
                         activities: person.activities,
                         roles: person.roles,
+                        tag: person.tag,
+                        nameplate: person.nameplate,
+                        name_style: person.name_style,
                         timed_out_until: names.timed_out_until(&self.guild, user),
                     });
                 }
@@ -357,6 +391,9 @@ fn row(guild: &str, item: &Value, names: &mut Names, people: &mut HashMap<String
         user.to_owned(),
         Person {
             roles: names.shared_roles(guild, user).unwrap_or_default(),
+            tag: crate::ready::server_tag(&member["user"]),
+            nameplate: crate::ready::nameplate(&member["user"]),
+            name_style: crate::ready::name_style(&member["user"]),
             presence: Presence::parse(presence),
             activity: activity(&presence["activities"]),
             activities: activities(&presence["activities"]),
@@ -415,6 +452,33 @@ mod tests {
 
     fn member(id: &str, name: &str) -> Value {
         json!({"member": {"user": {"id": id, "username": name}, "roles": [], "nick": null}})
+    }
+
+    #[test]
+    fn a_user_update_changes_the_tag_and_name_style_it_carries() {
+        let mut list = MemberList::new("5".into(), "6".into(), String::new());
+        list.people.insert("1".into(), Person::default());
+        let tag = |list: &MemberList| list.people["1"].tag.as_ref().map(|tag| tag.text.clone());
+        assert!(list.user_changed(&json!({
+            "id": "1",
+            "primary_guild": {"identity_enabled": true, "identity_guild_id": "9", "tag": "GUYS", "badge": "abc"},
+            "display_name_styles": {"font_id": 3, "effect_id": 2, "colors": [255]},
+        })));
+        assert_eq!(tag(&list).as_deref(), Some("GUYS"));
+        assert!(list.people["1"].name_style.is_some());
+        // A user object without them says nothing about them.
+        assert!(list.user_changed(&json!({"id": "1", "username": "a"})));
+        assert_eq!(tag(&list).as_deref(), Some("GUYS"));
+        assert!(list.people["1"].name_style.is_some());
+        // Null takes them off.
+        assert!(
+            list.user_changed(
+                &json!({"id": "1", "primary_guild": null, "display_name_styles": null})
+            )
+        );
+        assert_eq!(tag(&list), None);
+        assert!(list.people["1"].name_style.is_none());
+        assert!(!list.user_changed(&json!({"id": "2"})), "not listed");
     }
 
     #[test]

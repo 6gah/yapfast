@@ -361,6 +361,33 @@ pub struct ProfileView {
     pub kept: bool,
     /// Why Discord didn't give the rest.
     pub note: Option<String>,
+    /// The full profile's Board or Wishlist tab has been opened, so a profile
+    /// that comes later is asked after in turn.
+    pub board_open: bool,
+    pub wishlist_open: bool,
+    pub activity_open: bool,
+}
+
+/// A tab on the full profile that asks Discord for more when it first opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileTab {
+    Board,
+    Activity,
+    Wishlist,
+}
+
+/// Someone's badge window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PersonBadges {
+    pub user: String,
+    pub name: String,
+    /// The address of their avatar.
+    pub avatar: Option<String>,
+    /// The badge clicked to open it, by the window's number.
+    pub badge: Option<u64>,
+    /// What they own, once Discord says.
+    pub badges: Option<Vec<crate::chat::DirectoryBadge>>,
+    pub error: Option<String>,
 }
 
 /// A screen the top of the DM list opens in place of a conversation.
@@ -461,6 +488,9 @@ pub struct AppState {
     /// it shows.
     pub discord_show_game: bool,
     pub discord_playing: Option<chat::Playing>,
+    /// What the Discord account shows it's doing, on this device and its
+    /// others, as its own profile shows it.
+    pub discord_activities: chat::Activities,
     /// How loud the Discord account's soundboard plays, as Discord keeps
     /// it: from 0 to 100, on its slider's curve.
     pub soundboard_volume: f32,
@@ -506,6 +536,19 @@ pub struct AppState {
     /// network gives them; a Discord-only build shows Discord's.
     pub account_name: Option<String>,
     pub account_avatar: Option<String>,
+    /// Discord's id and username for the account.
+    pub account_id: Option<String>,
+    pub account_handle: Option<String>,
+    /// The account's own profile, for its colours and banner once asked for.
+    pub account_profile: Option<Profile>,
+    /// The account's badge window: open, its badges once they've come, and why not.
+    pub badges_open: bool,
+    pub badges: Option<Vec<crate::chat::DirectoryBadge>>,
+    /// The badge to show first in the account's window, by the window's number.
+    pub badges_initial: Option<u64>,
+    /// Someone else's badge window.
+    pub person_badges: Option<PersonBadges>,
+    pub badges_error: Option<String>,
     pub account_status: Option<String>,
     pub preview: bool,
     pub busy: bool,
@@ -897,6 +940,7 @@ impl AppState {
         };
         if let Some(message) = self.messages.iter().rev().find(sender) {
             return Some(ChatMember {
+                owner: false,
                 id: user.to_owned(),
                 name: message.author.clone(),
                 username: None,
@@ -909,6 +953,9 @@ impl AppState {
                 activities: Default::default(),
                 roles: Default::default(),
                 timed_out_until: None,
+                tag: None,
+                nameplate: None,
+                name_style: None,
             });
         }
         // Someone in a Discord voice channel, as it lists them, the open
@@ -921,6 +968,7 @@ impl AppState {
             .find(|person| person.id == user)
         {
             return Some(ChatMember {
+                owner: false,
                 id: user.to_owned(),
                 name: person.name.clone(),
                 username: None,
@@ -933,6 +981,9 @@ impl AppState {
                 activities: Default::default(),
                 roles: Default::default(),
                 timed_out_until: None,
+                tag: None,
+                nameplate: None,
+                name_style: None,
             });
         }
         let target = Target::User(user.to_owned());
@@ -945,6 +996,7 @@ impl AppState {
         // Matrix links name no one; their id does.
         let name = mentioned.or_else(|| user.starts_with('@').then(|| user.to_owned()))?;
         Some(ChatMember {
+            owner: false,
             id: user.to_owned(),
             name,
             username: None,
@@ -957,6 +1009,9 @@ impl AppState {
             activities: Default::default(),
             roles: Default::default(),
             timed_out_until: None,
+            tag: None,
+            nameplate: None,
+            name_style: None,
         })
     }
 
@@ -1436,6 +1491,31 @@ pub enum Action {
     /// Download pictures that show outside the state, such as the emoji
     /// picker's; see [`DiscordCommand::Pictures`].
     LoadPictures(Vec<String>),
+    /// Pick the server whose tag to wear in the profile editor; empty for none.
+    ChooseServerTag(String),
+    /// Set the name style from its window; colours are hex, joined by commas.
+    ChooseNameStyle {
+        font: u32,
+        effect: u32,
+        colours: String,
+    },
+    /// Ask for the account's own profile, as its popout opens.
+    LoadOwnProfile,
+    /// The profile editor's wishlist tab opened.
+    OpenWishlist,
+    /// A tab of the full profile opened.
+    OpenProfileTab(ProfileTab),
+    /// A badge on someone's profile was clicked, with the window's number for it.
+    ShowPersonBadges {
+        user: String,
+        badge: Option<u64>,
+    },
+    ClosePersonBadges,
+    /// From someone's badge window, to the account's, on this badge.
+    ShowOwnBadges(Option<u64>),
+    /// Open or close the account's badge window.
+    ShowBadges,
+    CloseBadges,
     Login {
         homeserver: String,
         username: String,
@@ -2249,7 +2329,7 @@ fn pictures_on_screen<'a>(
                 .chain(&state.panel_profile)
                 .flat_map(|view| {
                     let profile = &view.profile;
-                    [&profile.avatar, &profile.banner]
+                    [&profile.avatar, &profile.decoration, &profile.banner]
                         .into_iter()
                         .chain(
                             profile
@@ -2411,6 +2491,10 @@ impl Application {
                 }
             }
             self.pictured_aside = aside.messages.clone();
+        }
+        if self.state.preview {
+            self.keep_test_pictures(wanted);
+            return None;
         }
         (!wanted.is_empty()).then_some(Effect::Backend(Command::Discord(DiscordCommand::Pictures(
             wanted,
@@ -2662,6 +2746,39 @@ impl Application {
             Action::Later => self.later(),
             Action::JumpToPresent => self.jump_to_present(),
             Action::LoadPictures(urls) => self.load_pictures(urls),
+            Action::LoadOwnProfile => self.load_own_profile(),
+            Action::OpenWishlist => self.open_wishlist(),
+            Action::OpenProfileTab(tab) => self.open_profile_tab(tab),
+            Action::ShowPersonBadges { user, badge } => self.show_person_badges(user, badge),
+            Action::ClosePersonBadges => {
+                self.state.person_badges = None;
+                vec![]
+            }
+            Action::ShowOwnBadges(badge) => {
+                self.state.person_badges = None;
+                self.state.badges_initial = badge;
+                self.show_own_badges()
+            }
+            Action::ChooseServerTag(server) => {
+                self.choose_server_tag(server);
+                vec![]
+            }
+            Action::ChooseNameStyle {
+                font,
+                effect,
+                colours,
+            } => {
+                self.choose_name_style(font, effect, &colours);
+                vec![]
+            }
+            Action::ShowBadges => {
+                self.state.badges_initial = None;
+                self.show_own_badges()
+            }
+            Action::CloseBadges => {
+                self.state.badges_open = false;
+                vec![]
+            }
             Action::Earlier => self.earlier(),
             Action::Login {
                 homeserver,
@@ -3366,8 +3483,15 @@ impl Application {
                     self.state.notice = Some(message);
                 }
             }
-            Event::Profile { user, result } => self.show_fetched_profile(user, result),
-            Event::KeptProfile { user, profile } => self.show_kept_profile(user, profile),
+            Event::Profile { user, result } => return self.show_fetched_profile(user, result),
+            Event::BadgeDirectory(result) => match result {
+                Ok(badges) => {
+                    self.state.badges = Some(badges);
+                    self.state.badges_error = None;
+                }
+                Err(error) => self.state.badges_error = Some(error),
+            },
+            Event::KeptProfile { user, profile } => return self.show_kept_profile(user, profile),
             Event::Members { room, members } => {
                 // A list that came stays when a later check finds none came.
                 let listed = members.is_err() && matches!(self.state.members, Some(Ok(_)));
@@ -3470,11 +3594,15 @@ impl Application {
             Event::ServerDeleted { server, result } => self.server_deleted(server, result),
             Event::ServerTransferred { server, result } => self.server_transferred(server, result),
             Event::ServerPincodeSent { server, result } => self.server_pincode_sent(server, result),
-            Event::OwnProfile { server, result } => self.own_profile_loaded(server, result),
+            Event::OwnProfile { server, result } => return self.own_profile_loaded(server, result),
+            Event::Wishlist { id, wishlist } => self.wishlist_loaded(&id, wishlist),
+            Event::ProfileBoard { user, widgets } => self.profile_board_named(&user, widgets),
+            Event::ProfileRecent { user, recent } => self.profile_recent_came(&user, recent),
+            Event::PersonBadges { user, result } => self.person_badges_loaded(&user, result),
             Event::ProfilePicture { kind, path, result } => {
                 self.profile_picture_read(kind, path, result);
             }
-            Event::ProfileSaved { server, result } => self.profile_saved(server, result),
+            Event::ProfileSaved { server, result } => return self.profile_saved(server, result),
             Event::MfaRequired { id, methods } => return self.mfa_required(id, methods),
             Event::MfaFinished { id, result } => return self.mfa_finished(id, result),
             Event::MfaTexted { id, result } => self.mfa_texted(id, result),

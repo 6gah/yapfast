@@ -2,12 +2,18 @@
 
 use super::*;
 
+mod test_members;
+
+pub(super) use test_members::{test_badges, test_own_badges, test_profile};
+
 impl Application {
     pub(super) fn start_preview(&mut self) -> Vec<Effect> {
         if self.state.busy || self.state.account.is_some() || self.state.preview {
             return vec![];
         }
         self.state.preview = true;
+        // One of #profile-tests is this account, to see its own profile.
+        self.state.account_id = Some(test_members::OWN_ID.into());
         self.state.servers = [
             ChatServer {
                 id: "friends".into(),
@@ -16,6 +22,7 @@ impl Application {
                     "general".into(),
                     "games".into(),
                     "weekend".into(),
+                    test_members::ROOM.into(),
                     "lounge".into(),
                 ],
                 discord: false,
@@ -26,6 +33,7 @@ impl Application {
                 hide_muted: false,
                 community: false,
                 pinned: Vec::new(),
+                tag: None,
             },
             ChatServer {
                 id: "coop".into(),
@@ -43,6 +51,7 @@ impl Application {
                 hide_muted: false,
                 community: false,
                 pinned: Vec::new(),
+                tag: None,
             },
         ]
         .into_iter()
@@ -53,6 +62,12 @@ impl Application {
             preview_room("general", "general", false, 4),
             preview_room("games", "games", false, 4),
             preview_room("weekend", "weekend plans", false, 4),
+            preview_room(
+                test_members::ROOM,
+                test_members::ROOM,
+                false,
+                test_members::members().len() as u64,
+            ),
             preview_room("announcements", "announcements", false, 3),
             preview_room("looking-for-group", "looking-for-group", false, 3),
             ChatRoom {
@@ -144,6 +159,8 @@ impl Application {
                     .collect(),
             );
         }
+        self.samples
+            .insert(test_members::ROOM.into(), test_members::messages());
         self.select("general".into())
     }
 
@@ -179,6 +196,7 @@ impl Application {
 
 pub(super) fn preview_room(id: &str, name: &str, direct: bool, members: u64) -> ChatRoom {
     ChatRoom {
+        tag: None,
         id: id.into(),
         network: Network::of(id),
         capabilities: Network::of(id).capabilities(),
@@ -218,6 +236,9 @@ pub(super) fn preview_room(id: &str, name: &str, direct: bool, members: u64) -> 
 /// Sample members whose names match the preview's messages.
 pub(super) fn preview_members(room: &str) -> Vec<ChatMember> {
     use Role::{Admin, Member, Moderator};
+    if room == test_members::ROOM {
+        return test_members::members();
+    }
     let people: &[(&str, Role)] = match room {
         "announcements" | "looking-for-group" => {
             &[("Riley", Admin), ("Sam", Member), ("You", Member)]
@@ -235,6 +256,7 @@ pub(super) fn preview_members(room: &str) -> Vec<ChatMember> {
     let mut members: Vec<_> = people
         .iter()
         .map(|&(name, role)| ChatMember {
+            owner: false,
             id: format!("@{}:preview.local", name.to_lowercase()),
             name: name.into(),
             username: None,
@@ -247,6 +269,9 @@ pub(super) fn preview_members(room: &str) -> Vec<ChatMember> {
             activities: Default::default(),
             roles: Default::default(),
             timed_out_until: None,
+            tag: None,
+            nameplate: None,
+            name_style: None,
         })
         .collect();
     chat::sort_members(&mut members);

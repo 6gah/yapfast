@@ -7,7 +7,7 @@
 //! in docs/discord/people.md.
 
 use super::*;
-use crate::chat::{OwnProfile, Permission, PickedPicture, ProfileChange, ProfilePicture};
+use crate::chat::{OwnProfile, Permission, PickedPicture, ProfileChange, ProfilePicture, Wishlist};
 
 /// The longest name, pronouns and bio Discord takes, in characters: a
 /// server nickname and a display name alike.
@@ -27,6 +27,9 @@ pub enum ProfileText {
     Bio,
     /// The main profile's banner colour, as `#rrggbb`.
     Colour,
+    /// The main profile's theme colours.
+    ThemeTop,
+    ThemeBottom,
 }
 
 /// What becomes of an avatar or banner.
@@ -53,12 +56,31 @@ pub struct ProfileEditor {
     pub server_name: String,
     /// What Discord has; none while it sends it.
     pub profile: Option<OwnProfile>,
+    /// The wishlist its tab shows, asked for when that tab first opens.
+    pub wishlist: Wishlist,
     /// As written, starting from the profile.
     pub name: String,
     pub pronouns: String,
     pub bio: String,
     /// The banner colour, as `#rrggbb`, or empty for Discord's default.
     pub colour: String,
+    /// The theme colours and name colours as written, the name's font, and
+    /// what Discord has of them, taken from the account's profile when it comes.
+    pub theme_top: String,
+    pub theme_bottom: String,
+    pub name_font: Option<u32>,
+    pub name_effect: u32,
+    pub name_colours: Vec<u32>,
+    pub kept_theme: Option<[u32; 2]>,
+    pub kept_style: Option<crate::chat::NameStyle>,
+    pub look_loaded: bool,
+    /// The server tag chosen: none while it stays as it is, then the server's
+    /// id, or none for no tag.
+    pub chosen_tag: Option<Option<String>>,
+    /// The server tag last saved here, which is no longer a change.
+    pub kept_tag: Option<Option<String>>,
+    /// Saved, and waiting for what Discord now has.
+    pub refreshing: bool,
     pub avatar: PictureEdit,
     pub banner: PictureEdit,
     /// A picture being read, for the avatar or the banner.
@@ -75,6 +97,29 @@ impl ProfileEditor {
     /// Waiting for Discord to send the profile.
     pub fn loading(&self) -> bool {
         self.profile.is_none() && self.error.is_none()
+    }
+
+    /// Asks Discord for the wishlist the profile says it has. Without a
+    /// profile yet it stays loading, for [`Application::own_profile_loaded`];
+    /// a profile without a wishlist has an empty one.
+    fn ask_wishlist(&mut self) -> Vec<Effect> {
+        let Some(profile) = self.profile.as_ref() else {
+            self.wishlist = if self.loading() {
+                Wishlist::Loading
+            } else {
+                Wishlist::Failed
+            };
+            return vec![];
+        };
+        let Some(place) = profile.fallback.wishlist_place.as_ref() else {
+            self.wishlist = Wishlist::Loaded(Vec::new());
+            return vec![];
+        };
+        let id = place.id.clone();
+        self.wishlist = Wishlist::Loading;
+        vec![Effect::Backend(Command::Discord(
+            DiscordCommand::Wishlist { id },
+        ))]
     }
 
     /// It edits the main profile, not one server's.
@@ -107,6 +152,7 @@ impl ProfileEditor {
             ProfileText::Pronouns => true,
             ProfileText::Bio => self.main() || self.nitro(),
             ProfileText::Colour => self.main() && !self.nitro(),
+            ProfileText::ThemeTop | ProfileText::ThemeBottom => self.main() && self.nitro(),
         }
     }
 
@@ -148,19 +194,58 @@ impl ProfileEditor {
     /// The banner colour as written: none for Discord's default, and an
     /// error when it isn't a colour.
     pub fn accent(&self) -> Result<Option<u32>, NotAColour> {
-        let colour = self.colour.trim();
-        if colour.is_empty() {
-            return Ok(None);
+        parse_colour(&self.colour)
+    }
+
+    /// The theme as written: none when both are empty; one colour alone is
+    /// used for both.
+    pub fn theme(&self) -> Result<Option<[u32; 2]>, NotAColour> {
+        let (top, bottom) = (
+            parse_colour(&self.theme_top)?,
+            parse_colour(&self.theme_bottom)?,
+        );
+        Ok(match (top, bottom) {
+            (Some(top), Some(bottom)) => Some([top, bottom]),
+            (Some(one), None) | (None, Some(one)) => Some([one, one]),
+            (None, None) => None,
+        })
+    }
+
+    /// The name style as chosen: none with no font, effect or colour.
+    pub fn name_style(&self) -> Option<crate::chat::NameStyle> {
+        self.name_font.map(|font| crate::chat::NameStyle {
+            font,
+            effect: self.name_effect.max(1),
+            colors: if self.name_colours.is_empty() {
+                vec![0]
+            } else {
+                self.name_colours.clone()
+            },
+        })
+    }
+
+    /// Takes the theme and name style from the account's profile, once.
+    pub fn fill_look(&mut self, profile: &crate::chat::Profile) {
+        if self.look_loaded {
+            return;
         }
-        let hex = colour.strip_prefix('#').unwrap_or(colour);
-        let hex = match hex.len() {
-            3 => hex.chars().flat_map(|digit| [digit, digit]).collect(),
-            6 => hex.to_owned(),
-            _ => return Err(NotAColour),
-        };
-        u32::from_str_radix(&hex, 16)
-            .map(Some)
-            .map_err(|_| NotAColour)
+        self.look_loaded = true;
+        self.kept_theme = profile.theme;
+        self.kept_style = profile.name_style.clone();
+        self.reset_look();
+    }
+
+    /// Puts the theme and name style back as Discord has them.
+    fn reset_look(&mut self) {
+        let [top, bottom] = self
+            .kept_theme
+            .map_or([None, None], |[top, bottom]| [Some(top), Some(bottom)]);
+        self.theme_top = colour_text(top);
+        self.theme_bottom = colour_text(bottom);
+        let style = self.kept_style.as_ref();
+        self.name_font = style.map(|style| style.font);
+        self.name_effect = style.map_or(1, |style| style.effect);
+        self.name_colours = style.map_or_else(Vec::new, |style| style.colors.clone());
     }
 
     /// A text that's longer than Discord takes.
@@ -177,6 +262,9 @@ impl ProfileEditor {
 
     /// What saving would change; none when nothing does.
     pub fn change(&self) -> Option<ProfileChange> {
+        if self.refreshing {
+            return None;
+        }
         let profile = self.profile.as_ref()?;
         let text = |field: ProfileText, written: &str, kept: &str| {
             let written = written.trim();
@@ -196,6 +284,18 @@ impl ProfileEditor {
             bio: text(ProfileText::Bio, &self.bio, &profile.bio),
             avatar: picture(ProfilePicture::Avatar, &self.avatar, &profile.avatar),
             banner: picture(ProfilePicture::Banner, &self.banner, &profile.banner),
+            primary_server: self
+                .chosen_tag
+                .clone()
+                .filter(|chosen| self.main() && Some(chosen) != self.kept_tag.as_ref()),
+            theme: self
+                .theme()
+                .ok()
+                .filter(|theme| self.may_write(ProfileText::ThemeTop) && *theme != self.kept_theme),
+            name_style: {
+                let style = self.name_style();
+                (self.may_write(ProfileText::ThemeTop) && style != self.kept_style).then_some(style)
+            },
             accent: self
                 .accent()
                 .ok()
@@ -206,9 +306,29 @@ impl ProfileEditor {
             || change.bio.is_some()
             || change.avatar.is_some()
             || change.banner.is_some()
-            || change.accent.is_some();
+            || change.accent.is_some()
+            || change.theme.is_some()
+            || change.primary_server.is_some()
+            || change.name_style.is_some();
         some.then_some(change)
     }
+}
+
+/// A colour as written, as `#rgb` or `#rrggbb`: none when empty.
+fn parse_colour(text: &str) -> Result<Option<u32>, NotAColour> {
+    let colour = text.trim();
+    if colour.is_empty() {
+        return Ok(None);
+    }
+    let hex = colour.strip_prefix('#').unwrap_or(colour);
+    let hex = match hex.len() {
+        3 => hex.chars().flat_map(|digit| [digit, digit]).collect(),
+        6 => hex.to_owned(),
+        _ => return Err(NotAColour),
+    };
+    u32::from_str_radix(&hex, 16)
+        .map(Some)
+        .map_err(|_| NotAColour)
 }
 
 /// A colour as the editor writes it.
@@ -229,6 +349,12 @@ impl Application {
             premium: self.premium_type(),
             ..Default::default()
         });
+        if let (Some(editor), Some(own)) = (
+            self.state.profile_editor.as_mut(),
+            self.state.account_profile.as_ref(),
+        ) {
+            editor.fill_look(own);
+        }
         vec![Effect::Backend(Command::Discord(
             DiscordCommand::OwnProfile { server: None },
         ))]
@@ -284,20 +410,56 @@ impl Application {
         0
     }
 
+    /// Opens the editor's wishlist tab: asks Discord the first time, and again
+    /// after a failure. While the profile is still on its way, that waits for
+    /// it, which says where the wishlist is.
+    pub(super) fn open_wishlist(&mut self) -> Vec<Effect> {
+        let Some(editor) = self.state.profile_editor.as_mut() else {
+            return vec![];
+        };
+        match editor.wishlist {
+            Wishlist::Unasked | Wishlist::Failed | Wishlist::Hidden => editor.ask_wishlist(),
+            Wishlist::Loading | Wishlist::Loaded(_) => vec![],
+        }
+    }
+
+    pub(super) fn wishlist_loaded(&mut self, id: &str, wishlist: Wishlist) {
+        self.profile_wishlist_loaded(id, &wishlist);
+        let Some(editor) = self.state.profile_editor.as_mut() else {
+            return;
+        };
+        let asked = editor
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.fallback.wishlist_place.as_ref())
+            .is_some_and(|place| place.id == id);
+        if asked {
+            editor.wishlist = wishlist;
+        }
+    }
+
     pub(super) fn own_profile_loaded(
         &mut self,
         server: Option<String>,
         result: Result<OwnProfile, String>,
-    ) {
-        let Some(editor) = self
-            .state
-            .profile_editor
-            .as_mut()
-            .filter(|editor| editor.server == server && editor.loading())
+    ) -> Vec<Effect> {
+        let Some(editor) =
+            self.state.profile_editor.as_mut().filter(|editor| {
+                editor.server == server && (editor.loading() || editor.refreshing)
+            })
         else {
-            return;
+            return vec![];
         };
+        let refreshed = std::mem::take(&mut editor.refreshing);
+        if refreshed {
+            editor.avatar = PictureEdit::Keep;
+            editor.banner = PictureEdit::Keep;
+        }
         match result {
+            // What was saved stays in the editor if it can't be read back.
+            Err(error) if refreshed => {
+                tracing::warn!(error, "could not read back the saved profile");
+            }
             Ok(profile) => {
                 editor.name.clone_from(&profile.name);
                 editor.pronouns.clone_from(&profile.pronouns);
@@ -306,6 +468,39 @@ impl Application {
                 editor.profile = Some(profile);
             }
             Err(error) => editor.error = Some(error),
+        }
+        // The tab opened before the profile came, so its asking is due.
+        if !refreshed && editor.wishlist == Wishlist::Loading {
+            return editor.ask_wishlist();
+        }
+        vec![]
+    }
+
+    /// Sets the name style its window chose; Discord's usual font with its
+    /// usual white is no style at all. Colours are hex, joined by commas.
+    pub(super) fn choose_name_style(&mut self, font: u32, effect: u32, colours: &str) {
+        let Some(editor) = self.state.profile_editor.as_mut() else {
+            return;
+        };
+        let colours: Vec<u32> = colours
+            .split(',')
+            .filter_map(|colour| parse_colour(colour).ok().flatten())
+            .collect();
+        if font == 11 && effect <= 1 && colours == [0xf0_f0_f2] {
+            editor.name_font = None;
+            editor.name_effect = 1;
+            editor.name_colours.clear();
+        } else {
+            editor.name_font = Some(font);
+            editor.name_effect = effect.max(1);
+            editor.name_colours = colours;
+        }
+    }
+
+    /// Picks the server whose tag to wear; an empty id for no tag.
+    pub(super) fn choose_server_tag(&mut self, server: String) {
+        if let Some(editor) = self.state.profile_editor.as_mut() {
+            editor.chosen_tag = Some(Some(server).filter(|server| !server.is_empty()));
         }
     }
 
@@ -316,6 +511,8 @@ impl Application {
                 ProfileText::Pronouns => &mut editor.pronouns,
                 ProfileText::Bio => &mut editor.bio,
                 ProfileText::Colour => &mut editor.colour,
+                ProfileText::ThemeTop => &mut editor.theme_top,
+                ProfileText::ThemeBottom => &mut editor.theme_bottom,
             } = text;
         }
     }
@@ -413,6 +610,8 @@ impl Application {
         editor.pronouns.clone_from(&profile.pronouns);
         editor.bio.clone_from(&profile.bio);
         editor.colour = colour_text(profile.accent);
+        editor.reset_look();
+        editor.chosen_tag = None;
         editor.avatar = PictureEdit::Keep;
         editor.banner = PictureEdit::Keep;
         editor.reading = None;
@@ -430,6 +629,7 @@ impl Application {
         };
         if editor.too_long().is_some()
             || (editor.may_write(ProfileText::Colour) && editor.accent().is_err())
+            || (editor.may_write(ProfileText::ThemeTop) && editor.theme().is_err())
         {
             return vec![];
         }
@@ -448,25 +648,59 @@ impl Application {
         ))]
     }
 
-    pub(super) fn profile_saved(&mut self, server: Option<String>, result: Result<(), String>) {
+    pub(super) fn profile_saved(
+        &mut self,
+        server: Option<String>,
+        result: Result<(), String>,
+    ) -> Vec<Effect> {
         let Some(editor) = self
             .state
             .profile_editor
             .as_mut()
             .filter(|editor| editor.saving && editor.server == server)
         else {
-            return;
+            return vec![];
         };
         match result {
-            // A server member's change comes back with GUILD_MEMBER_UPDATE,
-            // the main profile's name and avatar with USER_UPDATE; the rest
-            // shows in the profile, fetched again.
-            Ok(()) => self.state.profile_editor = None,
+            // It stays open, with nothing left to save. A server member's
+            // change comes back with GUILD_MEMBER_UPDATE, the main profile's
+            // name and avatar with USER_UPDATE; the rest, its tag, name style
+            // and theme among them, shows in the profile, fetched again.
+            Ok(()) => {
+                editor.saving = false;
+                editor.error = None;
+                editor.refreshing = true;
+                editor.kept_tag = editor.chosen_tag.clone();
+                editor.kept_theme = editor.theme().ok().flatten();
+                editor.kept_style = editor.name_style();
+                let (name, pronouns, bio) = (
+                    editor.name.trim().to_owned(),
+                    editor.pronouns.trim().to_owned(),
+                    editor.bio.trim().to_owned(),
+                );
+                let accent = editor.accent().ok().flatten();
+                if let Some(profile) = editor.profile.as_mut() {
+                    profile.name = name;
+                    profile.pronouns = pronouns;
+                    profile.bio = bio;
+                    profile.accent = accent;
+                }
+                let mut effects = vec![Effect::Backend(Command::Discord(
+                    DiscordCommand::OwnProfile {
+                        server: server.clone(),
+                    },
+                ))];
+                if server.is_none() {
+                    effects.extend(self.load_own_profile());
+                }
+                return effects;
+            }
             Err(error) => {
                 editor.saving = false;
                 editor.error = Some(error);
             }
         }
+        vec![]
     }
 
     /// Opens Discord's Nitro page, from the editor's offer.

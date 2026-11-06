@@ -295,12 +295,11 @@ impl MemberLists {
 
     /// Shows the list on screen again after USER_UPDATE changed this
     /// account's display name or avatar, if it lists it.
-    pub(super) fn user_changed(&self, tracker: &Tracker, data: &Value) {
-        let user = data["id"].as_str();
+    pub(super) fn user_changed(&mut self, tracker: &Tracker, data: &Value) {
         if self
             .shown
-            .as_ref()
-            .is_some_and(|list| user.is_some_and(|user| list.lists(user)))
+            .as_mut()
+            .is_some_and(|list| list.user_changed(data))
         {
             self.publish(tracker);
         }

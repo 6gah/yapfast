@@ -5675,6 +5675,7 @@ async fn edits_the_main_profile_as_discords_client_does() {
         .save_main_profile(
             &serde_json::json!({"global_name": "Ally", "avatar": dot}),
             &serde_json::json!({"bio": "Hi, I'm **Ally**", "pronouns": "she/her", "accent_color": 0x5865f2}),
+            None,
         )
         .await
         .unwrap();
@@ -5696,7 +5697,11 @@ async fn edits_the_main_profile_as_discords_client_does() {
     assert_eq!(own.accent, Some(0x5865f2));
     assert!(
         discord
-            .save_main_profile(&serde_json::json!({}), &serde_json::json!({"banner": dot}))
+            .save_main_profile(
+                &serde_json::json!({}),
+                &serde_json::json!({"banner": dot}),
+                None,
+            )
             .await
             .is_err(),
         "a banner takes Nitro"
@@ -5707,6 +5712,7 @@ async fn edits_the_main_profile_as_discords_client_does() {
         .save_main_profile(
             &serde_json::json!({"global_name": "", "avatar": null}),
             &serde_json::json!({"accent_color": null}),
+            None,
         )
         .await
         .unwrap();
@@ -5724,6 +5730,28 @@ async fn edits_the_main_profile_as_discords_client_does() {
         (own.name.as_str(), own.avatar, own.accent),
         ("", None, None)
     );
+    // The server tag she wears goes to its own endpoint, and shows in the
+    // profile fetched next; none takes it off.
+    let empty = serde_json::json!({});
+    let me = discord.snapshots().borrow().user_id.clone().unwrap();
+    let tag = async || {
+        discord
+            .profile(yapfast_discord::ready::PRIVATE, &me, |_| {})
+            .await
+            .unwrap()
+            .tag
+            .map(|tag| tag.text)
+    };
+    discord
+        .save_main_profile(&empty, &empty, Some(Some(&fixture.guild)))
+        .await
+        .unwrap();
+    assert_eq!(tag().await.as_deref(), Some("CREW"));
+    discord
+        .save_main_profile(&empty, &empty, Some(None))
+        .await
+        .unwrap();
+    assert_eq!(tag().await, None);
     post_control(server, "/_control/profile-reset", "");
     snapshot_where(discord, renamed("Alice")).await;
 }

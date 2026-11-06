@@ -1765,6 +1765,11 @@ impl OpenChannel {
             thread: self.thread_link(server, message),
             poll: message.poll.as_ref().map(|poll| chat_poll(poll, own)),
             notice: chat_notice(message),
+            tag: message.tag.clone().map(super::render::chat_tag),
+            name_style: message
+                .name_style
+                .clone()
+                .map(super::render::chat_name_style),
         }
     }
 

@@ -61,11 +61,55 @@ pub const SPAM: &str = "Spam";
 #[cfg(feature = "discord")]
 const MAX_PICTURE_BYTES: usize = 4 * 1024 * 1024;
 /// Profile banners, at the full profile's width; Discord's are 5:2.
-#[cfg(feature = "discord")]
 const BANNER_SIZE: (u32, u32) = (600, 240);
 /// The size Discord serves them at; a larger one is shrunk to it.
-#[cfg(feature = "discord")]
 const PICTURE_SIZE: u32 = 128;
+/// An avatar's frame, which the full profile draws wider than an avatar.
+const DECORATION_SIZE: (u32, u32) = (240, 240);
+/// A nameplate, as Discord makes them.
+const NAMEPLATE_SIZE: (u32, u32) = (448, 84);
+/// A profile effect's layer, as Discord makes them.
+const EFFECT_SIZE: (u32, u32) = (450, 880);
+/// A wishlist's card, which shows wider than an avatar.
+const WISHLIST_SIZE: (u32, u32) = (256, 256);
+/// A layer of a profile frame, about as wide as the full profile's card draws it,
+/// past its sides: shrinking one twice as wide when it's drawn leaves its edges jagged.
+const FRAME_SIZE: (u32, u32) = (460, 1600);
+/// A profile effect's layer can run longer than other pictures.
+const MAX_EFFECT_BYTES: usize = 16 * 1024 * 1024;
+
+/// The most of the picture at `url` to read.
+fn picture_limit(url: &str) -> usize {
+    if url.contains("/assets/content/") {
+        MAX_EFFECT_BYTES
+    } else {
+        MAX_PICTURE_BYTES
+    }
+}
+
+/// The most room the picture at `url` is decoded for, by what it's a picture of.
+pub(crate) fn picture_size(url: &str) -> (u32, u32) {
+    if url.contains("/banners/") {
+        BANNER_SIZE
+    } else if url.contains("/avatar-decoration-presets/") {
+        DECORATION_SIZE
+    } else if url.contains("/assets/collectibles/") {
+        NAMEPLATE_SIZE
+    } else if url.contains("/assets/content/") {
+        EFFECT_SIZE
+    } else if url.contains("/frames/")
+        || (url.contains("/media/v1/collectibles-shop/")
+            && url.ends_with("/static")
+            && url.matches('/').count() > 7)
+    {
+        FRAME_SIZE
+    } else if url.contains("/media/v1/collectibles-shop/") || url.contains("/store/") {
+        WISHLIST_SIZE
+    } else {
+        (PICTURE_SIZE, PICTURE_SIZE)
+    }
+}
+
 /// Pictures downloading at once. They have turns of their own, apart from
 /// the previews' (see `Api::download`), so neither waits behind the other.
 #[cfg(feature = "discord")]
@@ -212,6 +256,11 @@ fn voice_person(member: &yapfast_discord::service::VoiceMember) -> VoicePerson {
         streaming: member.streaming,
         video: member.video,
         elsewhere: member.elsewhere,
+        tag: member.tag.clone().map(crate::discord_text::chat_tag),
+        name_style: member
+            .name_style
+            .clone()
+            .map(crate::discord_text::chat_name_style),
     }
 }
 
@@ -661,6 +710,10 @@ fn dm_room(snapshot: &Snapshot, dm: &Conversation, premium: u8, me: &str) -> Cha
         avatar: dm.avatar.clone(),
         upload_limit: yapfast_discord::api::upload_limit(premium, None),
         presence: dm.presence.map(presence),
+        tag: dm.tag.as_ref().map(|tag| chat::ServerTag {
+            text: tag.text.clone(),
+            badge: tag.badge.clone(),
+        }),
         activity: dm.activity.clone(),
         activities: dm.activities.clone(),
         parent: None,
@@ -770,6 +823,7 @@ fn server_rooms(
             .unwrap_or_default();
         rooms.push(if voice {
             ChatRoom {
+                tag: None,
                 id: id.clone(),
                 network: Network::Discord,
                 capabilities: Network::Discord.capabilities(),
@@ -814,6 +868,7 @@ fn server_rooms(
             }
         } else {
             ChatRoom {
+                tag: None,
                 id: id.clone(),
                 network: Network::Discord,
                 capabilities: Network::Discord.capabilities(),
@@ -881,6 +936,10 @@ fn server_rooms(
         hide_muted: server.marks.notifications.hide_muted_channels,
         community: server.community,
         pinned,
+        tag: server.tag.as_ref().map(|tag| chat::ServerTag {
+            text: tag.text.clone(),
+            badge: tag.badge.clone(),
+        }),
     };
     (rooms, server)
 }
@@ -895,6 +954,7 @@ fn thread_room(
     premium: u8,
 ) -> ChatRoom {
     ChatRoom {
+        tag: None,
         id: room_id(&server.id, &thread.id),
         network: Network::Discord,
         capabilities: Network::Discord.capabilities(),
@@ -1090,18 +1150,14 @@ impl Pictures {
                 self.backoff.clone(),
             );
             self.tasks.spawn(async move {
-                let data = match discord.kept_picture(&url, MAX_PICTURE_BYTES).await {
+                let data = match discord.kept_picture(&url, picture_limit(&url)).await {
                     Some(kept) => kept,
                     None => match download(&discord, &url, &turns, batch, &backoff).await {
                         Some(data) => data,
                         None => return,
                     },
                 };
-                let (width, height) = if url.contains("/banners/") {
-                    BANNER_SIZE
-                } else {
-                    (PICTURE_SIZE, PICTURE_SIZE)
-                };
+                let (width, height) = picture_size(&url);
                 let Ok(_decoding) = decodes.acquire().await else {
                     return;
                 };
@@ -1152,7 +1208,7 @@ async fn download(
         let turn = turns.take(batch).await?;
         tries += 1;
         let started = Instant::now();
-        let result = discord.download_now(url, MAX_PICTURE_BYTES).await;
+        let result = discord.download_now(url, picture_limit(url)).await;
         drop(turn);
         match result {
             Ok(data) => {
@@ -1508,6 +1564,8 @@ mod tests {
             elsewhere: false,
             server_muted: false,
             server_deafened: false,
+            tag: None,
+            name_style: None,
         };
         let first = Snapshot {
             servers: vec![server("10", "11", "12"), server("20", "21", "22")],
@@ -1676,6 +1734,8 @@ mod tests {
                 streaming: false,
                 video: false,
                 elsewhere: false,
+                tag: None,
+                name_style: None,
             }],
         );
         assert!(kept.update_into(&call, false, &mut rooms, &mut servers));
@@ -1726,6 +1786,8 @@ mod tests {
                     elsewhere: false,
                     server_muted: false,
                     server_deafened: false,
+                    tag: None,
+                    name_style: None,
                 }],
             )]
             .into(),

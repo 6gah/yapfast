@@ -83,6 +83,52 @@ impl Reach {
 /// How long a picture that arrived waits for others to show with it.
 const PICTURE_BATCH: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The colour behind a member's nameplate, by the name Discord gives it.
+fn nameplate_color(member: &yapfast_core::chat::ChatMember) -> Option<u32> {
+    let palette = member.nameplate.as_ref()?.palette.as_deref()?;
+    Some(match palette {
+        "crimson" => 0x900007,
+        "berry" => 0x893a99,
+        "sky" => 0x0080b7,
+        "teal" => 0x086460,
+        "forest" => 0x2d5401,
+        "bubble_gum" => 0xdc3e97,
+        "violet" => 0x730bc8,
+        "cobalt" => 0x0131c2,
+        "clover" => 0x047b20,
+        "lemon" => 0xf6cd12,
+        "white" => 0xffffff,
+        "black" => 0x000000,
+        _ => return None,
+    })
+}
+
+/// A voice person's row, wearing their server tag and name style as their
+/// member row does.
+fn voice_looks(row: PersonRow, person: Option<&yapfast_core::chat::VoicePerson>) -> PersonRow {
+    let tag = person.and_then(|person| person.tag.as_ref());
+    let style = person.and_then(|person| person.name_style.as_ref());
+    PersonRow {
+        tag_text: tag.map_or("", |tag| tag.text.as_str()).into(),
+        tag_icon: tag
+            .and_then(|tag| tag.badge.as_deref())
+            .unwrap_or_default()
+            .into(),
+        name_font: profile::name_font(style),
+        name_weight: profile::name_weight(style),
+        name_spacing: profile::name_spacing(style),
+        name_effect: profile::name_effect(style),
+        name_paint: profile::name_paint(style),
+        has_name_paint: profile::has_name_paint(style),
+        ..row
+    }
+}
+
+/// A server's Discord id, from Yapfast's id for it.
+fn discord_server_id(id: &str) -> &str {
+    id.rsplit(':').next().unwrap_or(id)
+}
+
 impl Adapter {
     /// Browse Channels' rows whose channel's name has its search in it, each
     /// under its category's heading.
@@ -292,6 +338,7 @@ impl Adapter {
         self.show_workspace(window);
         self.show_sidebar(window);
         self.show_account(window);
+        self.show_badges(window);
         // A server's search stays, with its words, in the server's channels.
         if changes.selection && self.app.state.search_shown().is_none() {
             window.set_search_text(SharedString::default());
@@ -477,6 +524,20 @@ impl Adapter {
                 .find(|server| &server.id == id)
                 .map_or("Server".into(), |server| server.name.clone().into()),
         });
+        // Its icon, or initial, stands for it at the top of the folded list.
+        let open_server = match &state.navigation {
+            Navigation::Server(id) => state.servers.iter().find(|server| &server.id == id),
+            Navigation::DirectMessages => None,
+        };
+        window.set_sidebar_initial(
+            open_server.map_or_else(SharedString::default, |server| initials(&server.name)),
+        );
+        window.set_sidebar_picture_url(
+            open_server
+                .and_then(|server| server.icon.as_deref())
+                .unwrap_or_default()
+                .into(),
+        );
         // A Discord server's name opens its menu, as Discord's does.
         window.set_header_server(match &state.navigation {
             Navigation::Server(id)
@@ -696,6 +757,13 @@ impl Adapter {
                     voice: room.voice,
                     chat: room.voice_chat(),
                     direct: room.direct,
+                    tag_text: room.tag.as_ref().map_or("", |tag| tag.text.as_str()).into(),
+                    tag_icon: room
+                        .tag
+                        .as_ref()
+                        .and_then(|tag| tag.badge.as_deref())
+                        .unwrap_or_default()
+                        .into(),
                     initial: initial(&room.name),
                     tint: tint(&room.id),
                     picture: slint::Image::default(),
@@ -715,31 +783,39 @@ impl Adapter {
                         let people: Vec<_> = room
                             .people
                             .iter()
-                            .map(|person| PersonRow {
-                                id: person.id.clone().into(),
-                                name: person.name.clone().into(),
-                                initial: initial(&person.name),
-                                tint: tint(&person.id),
-                                picture: cached_picture(
-                                    &mut self.pictures,
-                                    state,
-                                    person.avatar.as_deref(),
-                                ),
-                                muted: person.muted,
-                                deafened: person.deafened,
-                                server_muted: person.server_muted,
-                                server_deafened: person.server_deafened,
-                                live: person.streaming,
-                                video: person.video,
-                                local: state.discord_user.as_ref() == Some(&person.id),
-                                elsewhere: person.elsewhere,
-                                person: person.id.clone().into(),
-                                connected: true,
-                                ..Default::default()
+                            .map(|person| {
+                                let row = PersonRow {
+                                    id: person.id.clone().into(),
+                                    name: person.name.clone().into(),
+                                    initial: initial(&person.name),
+                                    tint: tint(&person.id),
+                                    picture: cached_picture(
+                                        &mut self.pictures,
+                                        state,
+                                        person.avatar.as_deref(),
+                                    ),
+                                    muted: person.muted,
+                                    deafened: person.deafened,
+                                    server_muted: person.server_muted,
+                                    server_deafened: person.server_deafened,
+                                    live: person.streaming,
+                                    video: person.video,
+                                    local: state.discord_user.as_ref() == Some(&person.id),
+                                    elsewhere: person.elsewhere,
+                                    person: person.id.clone().into(),
+                                    connected: true,
+                                    ..Default::default()
+                                };
+                                voice_looks(row, Some(person))
                             })
                             .collect();
                         ModelRc::new(VecModel::from(people))
                     },
+                    people_live_beyond: room
+                        .people
+                        .iter()
+                        .skip(3)
+                        .any(|person| person.streaming && !person.elsewhere),
                     call: room.direct && !room.people.is_empty(),
                     // Discord sends the presence of friends and of those
                     // sharing a server; anyone else in a one-to-one DM shows
@@ -862,6 +938,150 @@ impl Adapter {
         )));
     }
 
+    /// The account's badge window.
+    fn show_badges(&self, window: &YapfastWindow) {
+        let state = &self.app.state;
+        window.set_badges_open(state.badges_open);
+        window.set_badges_note(
+            match (&state.badges, &state.badges_error) {
+                (None, Some(_)) => "Discord didn't share your badges.",
+                (None, None) => "Finding your badges...",
+                _ => "",
+            }
+            .into(),
+        );
+        let row = |badge: &yapfast_core::chat::DirectoryBadge| BadgeRow {
+            id: badge.id as i32,
+            // Headed as Discord heads it: the badge, and the level it's reached.
+            name: match badge.levels.iter().rev().find(|level| level.owned) {
+                Some(level) if badge.owned => format!("{} {}", badge.name, level.name),
+                _ => badge.name.clone(),
+            }
+            .to_uppercase()
+            .into(),
+            owned: badge.owned,
+            description: badge.description.as_str().into(),
+            info: badge.info.as_str().into(),
+            rarity: match badge.rarity {
+                1 => "Common",
+                2 => "Rare",
+                3 => "Epic",
+                5 => "Mythic",
+                _ => "",
+            }
+            .into(),
+            icon: badge.icon.as_str().into(),
+            art: badge.art.as_deref().unwrap_or(&badge.icon).into(),
+            unlocked: badge.unlocked.as_deref().unwrap_or_default().into(),
+            has_next: badge.next_name.is_some(),
+            next_name: badge.next_name.as_deref().unwrap_or_default().into(),
+            next_icon: badge.next_icon.as_deref().unwrap_or_default().into(),
+            current_icon: badge.icon.as_str().into(),
+            progress: if badge.span > 0 {
+                (badge.done as f32 / badge.span as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            helper: badge.helper.as_str().into(),
+            levels: ModelRc::new(VecModel::from(
+                badge
+                    .levels
+                    .iter()
+                    .map(|level| BadgeLevelRow {
+                        name: level.name.as_str().into(),
+                        icon: level.icon.as_str().into(),
+                        owned: level.owned,
+                        milestone: level.milestone.as_str().into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        };
+        let badges = state.badges.as_deref().unwrap_or_default();
+        let owned: Vec<_> = badges.iter().filter(|badge| badge.owned).map(row).collect();
+        let available: Vec<_> = badges
+            .iter()
+            .filter(|badge| !badge.owned && badge.earnable)
+            .map(row)
+            .collect();
+        let first = state
+            .badges_initial
+            .and_then(|id| {
+                badges
+                    .iter()
+                    .filter(|badge| badge.owned)
+                    .position(|badge| badge.id == id)
+            })
+            .unwrap_or(0);
+        window.set_badges_first(first as i32);
+        // Set only when they've come or changed, so the choice in the window stays.
+        if window.get_badges_owned().row_count() != owned.len()
+            || window.get_badges_available().row_count() != available.len()
+        {
+            window.set_badges_owned(ModelRc::new(VecModel::from(owned)));
+            window.set_badges_available(ModelRc::new(VecModel::from(available)));
+        }
+        self.show_person_badges(window);
+    }
+
+    /// Someone else's badge window, which shows what they own, with what this
+    /// account's own badges say of each.
+    fn show_person_badges(&self, window: &YapfastWindow) {
+        let state = &self.app.state;
+        let Some(person) = state.person_badges.as_ref() else {
+            window.set_person_badges_open(false);
+            return;
+        };
+        window.set_person_badges_name(profile::badge_window_name(&person.name).into());
+        window.set_person_badges_avatar(person.avatar.as_deref().unwrap_or_default().into());
+        window.set_person_badges_failed(person.badges.is_none() && person.error.is_some());
+        window.set_person_badges_note(
+            match (&person.badges, &person.error) {
+                (None, Some(_)) => "Oh no! Something went wrong.",
+                (None, None) => "Finding their badges...",
+                (Some(badges), _) if !badges.iter().any(|badge| badge.owned) => {
+                    "No badges to show."
+                }
+                _ => "",
+            }
+            .into(),
+        );
+        let mine = state.badges.as_deref().unwrap_or_default();
+        let badges = person.badges.as_deref().unwrap_or_default();
+        let rows: Vec<BadgeRow> = badges
+            .iter()
+            .filter(|badge| badge.owned)
+            .map(|badge| {
+                profile::person_badge_row(badge, mine.iter().find(|mine| mine.id == badge.id))
+            })
+            .collect();
+        let first = person
+            .badge
+            .and_then(|id| rows.iter().position(|row| i64::from(row.id) == id as i64))
+            .unwrap_or(0);
+        window.set_person_badges_first(first as i32);
+        // Compared so the choice in the window stays through a refresh.
+        let shown = window.get_person_badges();
+        let changed = shown.row_count() != rows.len()
+            || rows.iter().enumerate().any(|(index, row)| {
+                shown.row_data(index).is_none_or(|shown| {
+                    let levels = |row: &BadgeRow| row.levels.iter().collect::<Vec<_>>();
+                    levels(&shown) != levels(row)
+                        || BadgeRow {
+                            levels: ModelRc::default(),
+                            ..shown
+                        } != BadgeRow {
+                            levels: ModelRc::default(),
+                            ..row.clone()
+                        }
+                })
+            });
+        if changed {
+            window.set_person_badges(ModelRc::new(VecModel::from(rows)));
+        }
+        window.set_person_badges_open(true);
+    }
+
     /// The account at the bottom of the sidebar, and the notice.
     fn show_account(&mut self, window: &YapfastWindow) {
         let state = &self.app.state;
@@ -872,6 +1092,56 @@ impl Adapter {
             .unwrap_or_else(|| display_part(account));
         window.set_account(account.into());
         window.set_account_name(account_name.into());
+        window.set_account_id(state.account_id.clone().unwrap_or_default().into());
+        window.set_account_handle(state.account_handle.clone().unwrap_or_default().into());
+        let own = state.account_profile.as_ref();
+        if let Some(handle) = own
+            .map(|own| own.handle.as_str())
+            .filter(|handle| !handle.is_empty())
+        {
+            window.set_account_handle(handle.into());
+        }
+        let name_style = own.and_then(|own| own.name_style.as_ref());
+        window.set_account_name_font(profile::name_font(name_style));
+        window.set_account_name_weight(profile::name_weight(name_style));
+        window.set_account_name_spacing(profile::name_spacing(name_style));
+        window.set_account_name_effect(profile::name_effect(name_style));
+        window.set_account_name_paint(profile::name_paint(name_style));
+        window.set_account_has_name_paint(profile::has_name_paint(name_style));
+        window.set_account_pronouns(own.map_or("", |own| own.pronouns.as_str()).into());
+        let tag = own.and_then(|own| own.tag.as_ref());
+        window.set_account_tag_text(tag.map_or("", |tag| tag.text.as_str()).into());
+        window.set_account_tag_icon(
+            tag.and_then(|tag| tag.badge.as_deref())
+                .unwrap_or_default()
+                .into(),
+        );
+        let badges: Vec<_> = own
+            .into_iter()
+            .flat_map(|own| &own.badges)
+            .map(|badge| ProfileBadgeRow {
+                label: badge.description.clone().into(),
+                icon: badge.icon.clone().into(),
+                link: badge.link.clone().unwrap_or_default().into(),
+                directory: -1,
+            })
+            .collect();
+        window.set_account_badges(same_list(
+            &window.get_account_badges(),
+            ModelRc::new(VecModel::from(badges)),
+        ));
+        window.set_account_banner(
+            own.and_then(|own| own.banner.clone())
+                .unwrap_or_default()
+                .into(),
+        );
+        window.set_account_accent(role_color(own.and_then(|own| own.accent)));
+        window.set_account_has_accent(own.is_some_and(|own| own.accent.is_some()));
+        let theme = own.and_then(|own| own.theme);
+        window.set_account_theme_top(role_color(theme.map(|[top, _]| top)));
+        window.set_account_theme_bottom(role_color(theme.map(|[_, bottom]| bottom)));
+        window.set_account_has_theme(theme.is_some());
+        window.set_account_theme_light(own.is_some_and(|own| own.theme_is_light()));
         window.set_account_initial(initial(account_name));
         window.set_account_tint(tint(account_name));
         window.set_account_picture(cached_picture(
@@ -904,6 +1174,10 @@ impl Adapter {
         window.set_show_game(state.discord_show_game);
         let playing = state.discord_playing.as_ref();
         window.set_game_activity_name(playing.map_or("", |playing| &playing.name).into());
+        window.set_account_activities(same_list(
+            &window.get_account_activities(),
+            activity_rows(&state.discord_activities),
+        ));
         window.set_discord_status(state.discord_presence.as_deref().unwrap_or("online").into());
         window.set_storage(state.storage.unwrap_or_default().into());
         window.set_notice(state.notice.as_deref().unwrap_or_default().into());
@@ -1502,7 +1776,30 @@ impl Adapter {
                 .iter()
                 .enumerate()
                 .map(|(index, member)| {
-                    let (activity, activity_emoji) = activity_line(member.activity.as_deref());
+                    // Nothing listed says this account's own status; the session does.
+                    let own = state.account_id.as_deref() == Some(member.id.as_str());
+                    let own_status = state
+                        .custom_status
+                        .as_ref()
+                        .filter(|_| own && state.online)
+                        .map(profile::status_line);
+                    let activities = if own {
+                        &state.discord_activities
+                    } else {
+                        &member.activities
+                    };
+                    let (activity, activity_emoji) = match own_status {
+                        Some((words, emoji)) => (words.into(), emoji.unwrap_or_default().into()),
+                        None => activity_line(member.activity.as_deref()),
+                    };
+                    let music = activities.iter().any(|activity| activity.spotify());
+                    // A line that only says they're listening goes, as the note says it.
+                    let (activity, activity_emoji) =
+                        if music && profile::names_an_activity(&activity, activities) {
+                            (SharedString::default(), SharedString::default())
+                        } else {
+                            (activity, activity_emoji)
+                        };
                     MemberRow {
                         id: member.id.clone().into(),
                         name: member.name.clone().into(),
@@ -1511,12 +1808,46 @@ impl Adapter {
                         picture: slint::Image::default(),
                         picture_url: member.avatar.as_deref().unwrap_or_default().into(),
                         timed_out: member.timed_out_until.is_some_and(|until| until > now),
+                        tag_text: member
+                            .tag
+                            .as_ref()
+                            .map(|tag| tag.text.as_str())
+                            .unwrap_or_default()
+                            .into(),
+                        tag_icon: member
+                            .tag
+                            .as_ref()
+                            .and_then(|tag| tag.badge.as_deref())
+                            .unwrap_or_default()
+                            .into(),
+                        name_font: profile::name_font(member.name_style.as_ref()),
+                        name_weight: profile::name_weight(member.name_style.as_ref()),
+                        name_spacing: profile::name_spacing(member.name_style.as_ref()),
+                        name_effect: profile::name_effect(member.name_style.as_ref()),
+                        name_paint: profile::name_paint(member.name_style.as_ref()),
+                        has_name_paint: profile::has_name_paint(member.name_style.as_ref()),
+                        nameplate: member
+                            .nameplate
+                            .as_ref()
+                            .map(|plate| plate.still.as_str())
+                            .unwrap_or_default()
+                            .into(),
+                        nameplate_moving: member
+                            .nameplate
+                            .as_ref()
+                            .map(|plate| plate.moving.as_str())
+                            .unwrap_or_default()
+                            .into(),
+                        nameplate_tint: role_color(nameplate_color(member)),
+                        has_nameplate_tint: nameplate_color(member).is_some(),
                         presence: presence_name(member.presence).into(),
                         color: role_color(member.color),
                         has_color: member.color.is_some(),
                         // One line under the name, as Discord shows it.
                         activity,
                         activity_emoji,
+                        owner: member.owner,
+                        music,
                         // Discord names its groups; Matrix members group by role.
                         heading: if let Some(group) = &member.group {
                             if index == 0 || members[index - 1].group.as_ref() != Some(group) {
@@ -2160,16 +2491,36 @@ impl Adapter {
                 bio: written(&editor.bio, fallback.map(|fallback| &fallback.bio)),
                 created: fallback.and_then(|fallback| fallback.created.clone()),
                 joined: fallback.and_then(|fallback| fallback.joined.clone()),
-                ..Default::default()
+                theme: editor.theme().ok().flatten(),
+                name_style: editor.name_style(),
+                activities: self.app.state.discord_activities.clone(),
+                widgets: fallback
+                    .map(|fallback| fallback.widgets.clone())
+                    .unwrap_or_default(),
+                wishlist_place: fallback.and_then(|fallback| fallback.wishlist_place.clone()),
+                wishlist: editor.wishlist.clone(),
+                // What the editor doesn't change comes from the account's profile.
+                ..self.app.state.account_profile.clone().unwrap_or_default()
             },
             large: false,
             loading: false,
             kept: false,
             note: None,
+            ..Default::default()
         };
         let mut preview = profile_data(&mut self.pictures, &self.app.state, &view);
         // Someone's own card offers them nothing.
         preview.friend = 0;
+        // The tabs' lists stay as they are unless they changed, so a card
+        // doesn't lose its place or its pictures as this is shown again.
+        let shown = window.get_profile_editor_prompt().preview;
+        preview.widgets = same_widget_rows(&shown.widgets, preview.widgets);
+        preview.wishlist = same_list(&shown.wishlist, preview.wishlist);
+        if editor.loading() {
+            preview.board_note = "Loading the board…".into();
+        } else if editor.profile.is_none() {
+            preview.board_note = "Couldn't load the board.".into();
+        }
         if let Some(picture) = new_avatar {
             preview.picture = slint_image(picture);
         }
@@ -2207,6 +2558,23 @@ impl Adapter {
                 "Tell this server a bit about yourself",
             )
         };
+        // What it would wear: the choice, else what the profile has.
+        let shown_tag = match &editor.chosen_tag {
+            None => self
+                .app
+                .state
+                .account_profile
+                .as_ref()
+                .and_then(|own| own.tag.clone()),
+            Some(None) => None,
+            Some(Some(chosen)) => self
+                .app
+                .state
+                .servers
+                .iter()
+                .find(|server| discord_server_id(&server.id) == chosen)
+                .and_then(|server| server.tag.clone()),
+        };
         window.set_profile_editor_prompt(ProfileEditorPrompt {
             title: title.into(),
             detail: detail.into(),
@@ -2229,6 +2597,50 @@ impl Adapter {
             upgrade: editor.upgrade(),
             banner_shown: !main || editor.nitro(),
             colour_shown: editor.may_write(ProfileText::Colour),
+            server_tags: ModelRc::new(VecModel::from(
+                self.app
+                    .state
+                    .servers
+                    .iter()
+                    .filter_map(|server| {
+                        let tag = server.tag.as_ref()?;
+                        Some(ServerTagRow {
+                            id: discord_server_id(&server.id).into(),
+                            name: server.name.as_str().into(),
+                            icon: server.icon.as_deref().unwrap_or_default().into(),
+                            tag: tag.text.as_str().into(),
+                            badge: tag.badge.as_deref().unwrap_or_default().into(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+            tag_chosen_id: editor
+                .chosen_tag
+                .as_ref()
+                .and_then(|chosen| chosen.as_deref())
+                .unwrap_or_default()
+                .into(),
+            tag_text: shown_tag
+                .as_ref()
+                .map_or("", |tag| tag.text.as_str())
+                .into(),
+            tag_icon: shown_tag
+                .as_ref()
+                .and_then(|tag| tag.badge.as_deref())
+                .unwrap_or_default()
+                .into(),
+            look_enabled: editor.may_write(ProfileText::ThemeTop),
+            name_font_id: editor.name_font.map_or(11, |font| font as i32),
+            name_effect_id: editor.name_effect as i32,
+            name_colours_key: editor
+                .name_colours
+                .iter()
+                .map(|colour| format!("{colour:06x}"))
+                .collect::<Vec<_>>()
+                .join(",")
+                .into(),
+            theme_top_text: editor.theme_top.as_str().into(),
+            theme_bottom_text: editor.theme_bottom.as_str().into(),
             colour: colour
                 .ok()
                 .flatten()
@@ -3316,14 +3728,17 @@ impl Adapter {
         );
         let call_people: Vec<_> = present
             .iter()
-            .map(|person| PersonRow {
-                id: person.id.as_str().into(),
-                name: person.name.as_str().into(),
-                initial: initial(&person.name),
-                tint: tint(&person.id),
-                picture: cached_picture(&mut self.pictures, state, person.avatar.as_deref()),
-                connected: true,
-                ..Default::default()
+            .map(|person| {
+                let row = PersonRow {
+                    id: person.id.as_str().into(),
+                    name: person.name.as_str().into(),
+                    initial: initial(&person.name),
+                    tint: tint(&person.id),
+                    picture: cached_picture(&mut self.pictures, state, person.avatar.as_deref()),
+                    connected: true,
+                    ..Default::default()
+                };
+                voice_looks(row, Some(person))
             })
             .collect();
         update_model(&self.models.call_people, call_people);
@@ -3364,51 +3779,71 @@ impl Adapter {
         );
         window.set_voice_error(voice.error.as_deref().unwrap_or_default().into());
         window.set_voice_warning(voice.warning.as_deref().unwrap_or_default().into());
+        window.set_participants_live_beyond(
+            voice.active()
+                && voice
+                    .participants
+                    .iter()
+                    .skip(3)
+                    .any(|person| person.streaming),
+        );
+        // The call's room lists who is in it as Discord sees them, with the
+        // tags and name styles the participants don't carry.
+        let in_call = voice
+            .room
+            .as_ref()
+            .and_then(|id| state.rooms.iter().find(|room| &room.id == id))
+            .map_or(&[][..], |room| room.people.as_slice());
         update_model(
             &self.models.participants,
             if voice.active() {
                 voice
                     .participants
                     .iter()
-                    .map(|person| PersonRow {
-                        id: person.id.clone().into(),
-                        local: person.local,
-                        name: display_part(&person.user).into(),
-                        initial: initial(display_part(&person.user)),
-                        tint: tint(display_part(if person.local {
-                            account
-                        } else {
-                            &person.user
-                        })),
-                        speaking: person.speaking && !person.muted && person.connected,
-                        connected: person.connected,
-                        status: if let Some(problem) = &person.problem {
-                            problem.as_str()
-                        } else if !person.connected {
-                            "Connection lost"
-                        } else if person.deafened {
-                            "Deafened"
-                        } else if person.muted {
-                            "Muted"
-                        } else if person.speaking {
-                            "Speaking"
-                        } else {
-                            "Listening"
-                        }
-                        .into(),
-                        muted: person.muted,
-                        deafened: person.deafened,
-                        live: person.streaming,
-                        video: person.video.is_some(),
-                        elsewhere: false,
-                        server_muted: person.server_muted,
-                        server_deafened: person.server_deafened,
-                        person: person.person.clone().into(),
-                        picture: cached_picture(
-                            &mut self.pictures,
-                            state,
-                            person.avatar.as_deref(),
-                        ),
+                    .map(|person| {
+                        let listed = in_call.iter().find(|listed| listed.id == person.person);
+                        let row = PersonRow {
+                            id: person.id.clone().into(),
+                            local: person.local,
+                            name: display_part(&person.user).into(),
+                            initial: initial(display_part(&person.user)),
+                            tint: tint(display_part(if person.local {
+                                account
+                            } else {
+                                &person.user
+                            })),
+                            speaking: person.speaking && !person.muted && person.connected,
+                            connected: person.connected,
+                            status: if let Some(problem) = &person.problem {
+                                problem.as_str()
+                            } else if !person.connected {
+                                "Connection lost"
+                            } else if person.deafened {
+                                "Deafened"
+                            } else if person.muted {
+                                "Muted"
+                            } else if person.speaking {
+                                "Speaking"
+                            } else {
+                                "Listening"
+                            }
+                            .into(),
+                            muted: person.muted,
+                            deafened: person.deafened,
+                            live: person.streaming,
+                            video: person.video.is_some(),
+                            elsewhere: false,
+                            server_muted: person.server_muted,
+                            server_deafened: person.server_deafened,
+                            person: person.person.clone().into(),
+                            picture: cached_picture(
+                                &mut self.pictures,
+                                state,
+                                person.avatar.as_deref(),
+                            ),
+                            ..Default::default()
+                        };
+                        voice_looks(row, listed)
                     })
                     .collect()
             } else {
@@ -3931,6 +4366,15 @@ pub(super) fn rail_rows(
     let in_call = |server: &yapfast_core::chat::ChatServer| {
         call.is_some_and(|room| server.channels.iter().any(|channel| channel == room))
     };
+    // Someone shares their screen in one of its voice channels, which Discord
+    // marks on the server's icon while this account isn't in its call.
+    let streaming = |server: &yapfast_core::chat::ChatServer| {
+        state.rooms.iter().any(|room| {
+            room.voice
+                && room.people.iter().any(|person| person.streaming)
+                && server.channels.iter().any(|channel| channel == &room.id)
+        })
+    };
     let mut rows = Vec::with_capacity(state.servers.len());
     let mut servers = state.servers.iter().peekable();
     while let Some(server) = servers.next() {
@@ -3938,6 +4382,7 @@ pub(super) fn rail_rows(
             let (unread, mentions) = marks(server);
             rows.push(ServerRow {
                 call: in_call(server),
+                live: !in_call(server) && streaming(server),
                 ..server_row(server, selected(server), unread, mentions)
             });
             continue;
@@ -3975,6 +4420,8 @@ pub(super) fn rail_rows(
             unread,
             badge: count_badge(mentions),
             call: inside.iter().any(|server| in_call(server)),
+            live: !inside.iter().any(|server| in_call(server))
+                && inside.iter().any(|server| streaming(server)),
             discord: true,
             folder: true,
             open,
@@ -4000,6 +4447,7 @@ pub(super) fn rail_rows(
                     last: index == last,
                     tint,
                     call: in_call(server),
+                    live: !in_call(server) && streaming(server),
                     ..server_row(server, selected(server), unread, mentions)
                 });
             }

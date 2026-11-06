@@ -74,12 +74,19 @@ pub struct VoiceMember {
     /// This account, in the call on another client, such as Discord's app
     /// on a phone, rather than on this gateway session.
     pub elsewhere: bool,
+    /// The server tag they wear beside their name.
+    pub tag: Option<crate::ready::ServerTag>,
+    /// How they styled their display name.
+    pub name_style: Option<crate::ready::NameStyle>,
 }
 
 /// The linked account, as Discord shows it outside any server.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Account {
     pub name: String,
+    /// Its username, such as `ann`, when known.
+    #[serde(default)]
+    pub username: Option<String>,
     /// The address of its avatar.
     pub avatar: String,
     /// Its Nitro: 0 none, 1 Nitro Classic, 2 Nitro, 3 Nitro Basic; see
@@ -113,6 +120,10 @@ pub struct Conversation {
     pub spam: bool,
     /// The other person in a DM; none in a group.
     pub person: Option<String>,
+    /// The server tag the other person in a DM shows beside their name.
+    /// Not saved, since it comes with the people Discord sends.
+    #[serde(skip)]
+    pub tag: Option<crate::ready::ServerTag>,
     pub unread: bool,
     /// Unread messages, as every message in a DM counts as a mention.
     pub mentions: u64,
@@ -184,6 +195,10 @@ pub struct Friend {
     /// The nickname this account gave them.
     #[serde(default)]
     pub nickname: Option<String>,
+    /// When they became friends, in milliseconds, as READY and
+    /// RELATIONSHIP_ADD say it in `since`.
+    #[serde(default)]
+    pub since: Option<u64>,
     /// Whether they're around and their custom status or what they're doing,
     /// when Discord says. Not saved, since it's stale by the next start.
     #[serde(skip)]
@@ -304,6 +319,10 @@ pub struct Snapshot {
     /// The game this account shows it plays now.
     #[serde(skip)]
     pub playing: Option<Arc<crate::own_activity::Playing>>,
+    /// What this account shows it's doing, here and on its other devices, as
+    /// its own profile shows it.
+    #[serde(skip)]
+    pub own_activities: crate::activity::Activities,
     /// The soundboard's volume, from 0 to 100 on the power curve of the
     /// other volumes, and the sounds that play as this account joins
     /// voice, as its settings keep them; the volume is none until they say,
@@ -719,6 +738,9 @@ impl Discord {
         // Sharing waits for READY unless an earlier session's settings said.
         let (show_game, shown) = watch::channel(watcher.borrow().show_game);
         let activity = crate::own_activity::start(api.clone(), watcher.clone(), shown);
+        // Nothing is known of a linked Spotify until READY.
+        let (spotify, accounts) = watch::channel(crate::spotify::Accounts::default());
+        let music = crate::spotify::start(api.clone(), accounts);
         tokio::spawn(cache::keep(watcher.clone(), names.clone()));
         tokio::spawn(session::run(
             token,
@@ -737,6 +759,8 @@ impl Discord {
                 presence,
                 activity,
                 show_game,
+                music,
+                spotify,
                 inactive: None,
                 viewing: None,
                 beside: None,
@@ -1296,8 +1320,14 @@ impl Discord {
         }
         let value = self.api.profile(user, server(guild)).await?;
         self.write_names().learn_user(&value["user"]);
-        let profile = profile::parse(&value, server(guild))
+        let mut profile = profile::parse(&value, server(guild))
             .ok_or_else(|| anyhow!("could not understand Discord's answer"))?;
+        if let Some(sku) = profile::effect_sku(&value, server(guild)) {
+            profile.effect = self.profile_effect(sku).await;
+        }
+        if let Some(sku) = profile::frame_sku(&value, server(guild)) {
+            profile.frame = self.profile_frame(sku).await;
+        }
         {
             let mut profiles = self.lock_profiles();
             profiles.retain(|old| !same(&old));
@@ -1315,6 +1345,76 @@ impl Discord {
         let (guild, user, saving) = (guild.to_owned(), user.to_owned(), profile.clone());
         tokio::task::spawn_blocking(move || cache::save_profile(&guild, &user, &saving));
         Ok(profile)
+    }
+
+    /// The badges this account has and can earn, as its badge window lists them.
+    pub async fn badge_directory(&self) -> Result<Vec<profile::DirectoryBadge>> {
+        Ok(profile::badge_directory(&self.api.badges("@me").await?))
+    }
+
+    /// The badges someone owns, with their levels, as the client's window
+    /// asks for them.
+    pub async fn user_badges(&self, user: &str) -> Result<Vec<profile::DirectoryBadge>> {
+        Ok(profile::badge_directory(&self.api.badges(user).await?))
+    }
+
+    /// A profile effect's layers, asked of Discord once. A profile shows
+    /// without them if Discord doesn't say.
+    /// A profile frame's layers, kept once fetched as an effect's are.
+    async fn profile_frame(&self, sku: &str) -> Option<profile::Frame> {
+        static FRAMES: std::sync::Mutex<Option<HashMap<String, Option<profile::Frame>>>> =
+            std::sync::Mutex::new(None);
+        let known = FRAMES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_default()
+            .get(sku)
+            .cloned();
+        if let Some(frame) = known {
+            return frame;
+        }
+        let frame = match self.api.collectible(sku).await {
+            Ok(product) => profile::frame(&product),
+            Err(error) => {
+                tracing::debug!(%error, "could not get a profile frame");
+                return None;
+            }
+        };
+        FRAMES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_default()
+            .insert(sku.to_owned(), frame.clone());
+        frame
+    }
+
+    /// What someone did lately, for their full profile's Activity tab.
+    pub async fn recent_activity(&self, user: &str) -> Result<Vec<profile::RecentEntry>> {
+        Ok(profile::recent_entries(&self.api.outbox(user).await?))
+    }
+
+    async fn profile_effect(&self, sku: &str) -> Vec<profile::EffectLayer> {
+        static EFFECTS: std::sync::Mutex<Option<HashMap<String, Vec<profile::EffectLayer>>>> =
+            std::sync::Mutex::new(None);
+        let known = |effects: &mut Option<HashMap<_, Vec<_>>>| {
+            effects.get_or_insert_default().get(sku).cloned()
+        };
+        if let Some(layers) = known(&mut EFFECTS.lock().unwrap_or_else(|e| e.into_inner())) {
+            return layers;
+        }
+        let layers = match self.api.collectible(sku).await {
+            Ok(product) => profile::effect_layers(&product),
+            Err(error) => {
+                tracing::debug!(%error, "could not get a profile effect");
+                return Vec::new();
+            }
+        };
+        EFFECTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_default()
+            .insert(sku.to_owned(), layers.clone());
+        layers
     }
 
     /// A member's nickname and avatar in a server, as Names knows them.
@@ -1396,11 +1496,55 @@ impl Discord {
         let me = self.snapshots.borrow().user_id.clone();
         let me = me.ok_or_else(|| anyhow!("Discord hasn't said who this account is yet"))?;
         let value = self.api.profile(&me, guild).await?;
-        match guild {
+        let mut profile = match guild {
             Some(guild) => profile::parse_server(&value, guild),
             None => profile::parse_main(&value),
         }
-        .ok_or_else(|| anyhow!("could not understand Discord's answer"))
+        .ok_or_else(|| anyhow!("could not understand Discord's answer"))?;
+        // Only the main profile's editor has room for the board.
+        if guild.is_none() {
+            self.name_widgets(&mut profile.fallback.widgets).await;
+        }
+        Ok(profile)
+    }
+
+    /// Names a board's games and applications. What Discord doesn't say
+    /// stays as it is, and the board shows without it.
+    pub async fn name_widgets(&self, widgets: &mut [crate::widgets::Widget]) {
+        let mut games: Vec<&str> = widgets
+            .iter()
+            .flat_map(|widget| &widget.games)
+            .map(|game| game.id.as_str())
+            .collect();
+        games.sort_unstable();
+        games.dedup();
+        let mut known = Vec::new();
+        for ids in games.chunks(crate::widgets::GAMES_AT_ONCE) {
+            match self.api.games(ids).await {
+                Ok(answer) => known.extend(crate::widgets::parse_games(&answer)),
+                Err(error) => tracing::debug!(%error, "could not get a board's games"),
+            }
+        }
+        crate::widgets::name_games(widgets, &known);
+        let applications: Vec<String> = widgets
+            .iter()
+            .filter_map(|widget| widget.application.clone())
+            .collect();
+        if applications.is_empty() {
+            return;
+        }
+        let ids: Vec<&str> = applications.iter().map(String::as_str).collect();
+        match self.api.public_applications(&ids).await {
+            Ok(answer) => crate::widgets::name_applications(widgets, &answer),
+            Err(error) => tracing::debug!(%error, "could not get a board's applications"),
+        }
+    }
+
+    /// The items on a wishlist, by the id a profile gave, as Discord's client
+    /// fetches them for either its own account or someone else.
+    pub async fn wishlist(&self, id: &str) -> Result<Vec<crate::wishlist::Item>> {
+        crate::wishlist::parse(&self.api.wishlist(id).await?)
+            .ok_or_else(|| anyhow!("could not understand Discord's answer"))
     }
 
     /// Changes this account's profile in a server as Discord's client
@@ -1736,15 +1880,24 @@ impl Discord {
     }
 
     /// Changes this account's main profile as Discord's client does:
-    /// `user`'s fields, its display name and avatar, go to the user, then
-    /// `profile`'s, its bio, pronouns, banner and banner colour, to its
-    /// profile, each only when it has any. USER_UPDATE follows both.
-    pub async fn save_main_profile(&self, user: &Value, profile: &Value) -> Result<()> {
+    /// `user`'s fields, its display name, avatar and name style, go to the
+    /// user, then `profile`'s, its bio, pronouns, banner, colours and theme,
+    /// to its profile, each only when it has any, then the server whose tag
+    /// it wears, when that changed, to its own endpoint. USER_UPDATE follows.
+    pub async fn save_main_profile(
+        &self,
+        user: &Value,
+        profile: &Value,
+        server_tag: Option<Option<&str>>,
+    ) -> Result<()> {
         if some(user) {
             self.api.modify_me(user).await?;
         }
         if some(profile) {
             self.api.modify_profile_me(profile).await?;
+        }
+        if let Some(server) = server_tag {
+            self.api.set_server_tag(server).await?;
         }
         self.forget_own_profile(None);
         Ok(())

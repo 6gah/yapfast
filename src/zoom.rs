@@ -63,6 +63,11 @@ impl Keys {
         self.control && !self.alt && !self.shift
     }
 
+    /// Ctrl and Shift are held, without Alt.
+    pub fn control_shift(&self) -> bool {
+        self.control && self.shift && !self.alt
+    }
+
     pub fn event(&mut self, event: &WindowEvent) -> Outcome {
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {

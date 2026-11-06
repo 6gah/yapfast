@@ -1,7 +1,8 @@
 import { ListView } from "scrollview.slint";
 import { Theme, Tip, ReactionHover, Middle, Label } from "theme.slint";
-import { ActionButton, IconButton, Avatar, Picture, Skeleton, SpoilerCover, MenuItem, TextField } from "controls.slint";
+import { ActionButton, IconButton, Avatar, Picture, Skeleton, SpoilerCover, MenuItem, TextField, GuildTag, Looks } from "controls.slint";
 import { FavoriteStar, GifFavorites } from "gifs.slint";
+import { NamePreset, StyledName } from "names.slint";
 
 /// An emoji: what shows, its name, and the reaction it adds, which for a custom
 /// emoji is Discord's `name:id`. A custom emoji shows its `picture` once it has
@@ -573,6 +574,14 @@ export struct MessageRow {
     color: color, has-color: bool,
     /// The author is a Discord bot or webhook: tagged after their name.
     bot: bool,
+    /// The server tag after their name, and the address of its picture.
+    tag-text: string, tag-icon: string,
+    /// The font they styled their name in; empty for the UI's own.
+    name-font: string,
+    /// Its weight; none for the UI's own.
+    name-weight: int,
+    /// Its letter spacing, how it moves and what colours it has.
+    name-spacing: float, name-effect: int, name-paint: NamePreset, has-name-style: bool, has-name-paint: bool,
     /// Starts a group: shows the avatar and author. Later messages from the same person follow compactly.
     first: bool,
     /// A date divider above this message, when it starts a new day.
@@ -1652,6 +1661,8 @@ export component VideoViewer inherits Rectangle {
 // for the conversation's timeline and a thread's beside it.
 export component MessageContent inherits VerticalLayout {
     in property <MessageRow> message;
+    /// A server's channel, where name styles show only their font, as in Discord.
+    in property <bool> in-server;
     /// The message the pointer or keyboard is on, whose time shows.
     in property <string> active-item;
     in property <bool> preview;
@@ -1700,6 +1711,7 @@ export component MessageContent inherits VerticalLayout {
             if message.first && message.notice == "": Avatar {
                 x: 0px; y: message.has-reply ? 24px : 2px;
                 initial: message.initial; tint: message.tint; picture: message.picture; picture-url: message.picture-url;
+                moving: root.active-item == message.item && Looks.animations;
             }
             // Clicking the author's avatar shows their card beside it;
             // a right click opens their menu. Their name does the same.
@@ -1748,11 +1760,27 @@ export component MessageContent inherits VerticalLayout {
             if message.first && message.notice == "": HorizontalLayout {
                 spacing: 8px;
                 Rectangle {
-                    min-width: author-name.min-width; preferred-width: author-name.preferred-width;
+                    // A styled name's font is what sets how wide it is.
+                    min-width: Looks.name-styles && message.has-name-style ? styled-author.width : author-name.min-width;
+                    preferred-width: Looks.name-styles && message.has-name-style ? styled-author.width : author-name.preferred-width;
                     preferred-height: author-name.preferred-height; horizontal-stretch: 0;
                     author-name := StyledText {
                         width: parent.width; height: parent.height;
-                        text: message.author-styled; link-color: Theme.link; default-color: message.has-color ? message.color : Theme.text; default-font-size: root.message-font-size; max-lines: 1; vertical-alignment: center;
+                        visible: !(Looks.name-styles && message.has-name-style);
+                        text: message.author-styled; default-font-family: Looks.name-styles ? message.name-font : ""; link-color: Theme.link; default-color: message.has-color ? message.color : Theme.text; default-font-size: root.message-font-size; max-lines: 1; vertical-alignment: center;
+                    }
+                    styled-author := StyledName {
+                        visible: Looks.name-styles && message.has-name-style;
+                        x: 0px; y: (parent.height - self.height) / 2;
+                        text: self.visible ? message.author : ""; family: message.name-font; size: root.message-font-size;
+                        weight: message.name-weight > 0 ? message.name-weight : 600;
+                        spacing: root.message-font-size * message.name-spacing;
+                        // Discord keeps an author's name plain until it's pointed at: only its font shows.
+                        // In a server only its font shows, as in Discord: no colours or movement.
+                        effect: !root.in-server && root.active-item == message.item ? message.name-effect : 0;
+                        paint: message.name-paint; painted: !root.in-server && message.has-name-paint && root.active-item == message.item;
+                        ink: message.has-color ? message.color : Theme.text;
+                        play: root.active-item == message.item;
                     }
                     // Underlined while pointed at, as a link is.
                     if author-touch.has-hover: Rectangle {
@@ -1770,6 +1798,7 @@ export component MessageContent inherits VerticalLayout {
                         }
                     }
                 }
+                if message.tag-text != "" && Looks.server-tags: Middle { GuildTag { text: message.tag-text; icon: message.tag-icon; } }
                 if message.bot: Middle { BotTag { } }
                 StyledText { text: message.time-styled; link-color: Theme.link; default-color: Theme.muted; default-font-size: root.message-font-size - 3px; max-lines: 1; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }

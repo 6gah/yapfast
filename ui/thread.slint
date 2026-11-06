@@ -191,6 +191,7 @@ export component ThreadPanel inherits Rectangle {
                                 Rectangle { horizontal-stretch: 1; Rectangle { height: 1px; background: Theme.line; } }
                             }
                             MessageContent {
+                                in-server: true;
                                 message: message; active-item: root.active-item; composer-enabled: root.composer-enabled;
                                 emoji-font: root.emoji-font; message-font-size: root.message-font-size;
                                 end-padding: 16px;

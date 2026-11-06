@@ -147,6 +147,8 @@ pub(super) struct Tracker {
     ignored: Vec<String>,
     /// The nicknames this account gave its friends, by user id.
     nicknames: HashMap<String, String>,
+    /// When its friendships began, in milliseconds, by user id.
+    friends_since: HashMap<String, u64>,
     /// The server list's order and folders, from the settings.
     order: Vec<String>,
     folders: Vec<settings::Folder>,
@@ -160,6 +162,11 @@ pub(super) struct Tracker {
     /// the game it shows.
     pub(super) show_game: bool,
     pub(super) playing: Option<Arc<crate::own_activity::Playing>>,
+    /// What this session and another of this account's show it doing, and
+    /// the two together, as its own profile shows them.
+    here: Vec<Value>,
+    elsewhere: Vec<Value>,
+    own_activities: Activities,
     /// The soundboard's volume and join sounds, from the settings.
     soundboard_volume: Option<f32>,
     join_sounds: Arc<[crate::soundboard::JoinSound]>,
@@ -209,6 +216,7 @@ impl Tracker {
             blocked: Vec::new(),
             ignored: Vec::new(),
             nicknames: HashMap::new(),
+            friends_since: HashMap::new(),
             order: Vec::new(),
             folders: Vec::new(),
             status: "online".into(),
@@ -217,6 +225,9 @@ impl Tracker {
             // As in Discord's apps, until the settings say otherwise.
             show_game: true,
             playing: None,
+            here: Vec::new(),
+            elsewhere: Vec::new(),
+            own_activities: Activities::default(),
             soundboard_volume: None,
             join_sounds: Arc::from([]),
             requests: HashMap::new(),
@@ -227,6 +238,7 @@ impl Tracker {
             beside: None,
         };
         tracker.sort_servers();
+        tracker.sessions(&ready["sessions"]);
         if let Some(encoded) = ready["user_settings_proto"].as_str() {
             tracker.settings(encoded);
         }
@@ -312,6 +324,7 @@ impl Tracker {
 
     fn apply_servers(&mut self, event: &Event, data: &Value) -> bool {
         match event {
+            Event::SessionsReplace => self.sessions(data),
             Event::ReadySupplemental => {
                 // The DMs left out of READY to make it smaller.
                 for channel in data["lazy_private_channels"]
@@ -426,6 +439,7 @@ impl Tracker {
                 if let Some(id) = id {
                     self.requests.remove(id);
                     self.nicknames.remove(id);
+                    self.friends_since.remove(id);
                 }
                 true
             }
@@ -1099,6 +1113,7 @@ impl Tracker {
             .map(|user| {
                 // MemberLists gives this account its own presence.
                 let known = self.presences.get(user).cloned().unwrap_or_default();
+                let looks = names.looks(user);
                 ListedMember {
                     user_id: user.clone(),
                     name: names.user_name(user).unwrap_or("Discord user").to_owned(),
@@ -1111,6 +1126,10 @@ impl Tracker {
                     activities: known.activities,
                     roles: Arc::default(),
                     timed_out_until: None,
+                    owner: group.owner.as_deref() == Some(user.as_str()),
+                    tag: looks.tag,
+                    nameplate: looks.nameplate,
+                    name_style: looks.name_style,
                 }
             })
             .collect();
@@ -1265,6 +1284,29 @@ impl Tracker {
             )
     }
 
+    /// Takes in the list of this account's sessions; returns whether what it
+    /// shows of itself changed.
+    fn sessions(&mut self, sessions: &Value) -> bool {
+        self.elsewhere = activity::elsewhere(sessions, self.session.as_deref());
+        self.own_activities_changed()
+    }
+
+    /// Takes in the activities this session sends; returns whether what it
+    /// shows of itself changed.
+    pub(super) fn shows_here(&mut self, activities: &Value) -> bool {
+        self.here = activities.as_array().cloned().unwrap_or_default();
+        self.own_activities_changed()
+    }
+
+    fn own_activities_changed(&mut self) -> bool {
+        let shown = activity::own(&self.here, &self.elsewhere);
+        let changed = shown != self.own_activities;
+        if changed {
+            self.own_activities = shown;
+        }
+        changed
+    }
+
     /// The presence this session shows, as the settings say, and `away`.
     pub(super) fn own_presence(&self, away: settings::Away) -> Value {
         settings::presence(&self.status, self.custom_status.as_ref(), now_ms(), away)
@@ -1296,6 +1338,12 @@ impl Tracker {
                 Some(nickname) => self.nicknames.insert(id.to_owned(), nickname.to_owned()),
                 None => self.nicknames.remove(id),
             };
+        }
+        if let Some(since) = relationship["since"]
+            .as_str()
+            .and_then(crate::message::iso_ms)
+        {
+            self.friends_since.insert(id.to_owned(), since);
         }
         let Some(kind) = relationship["type"].as_u64() else {
             return;
@@ -1339,7 +1387,12 @@ impl Tracker {
         let mut hasher = DefaultHasher::new();
         for user in &self.friends {
             shown(&mut hasher, user);
-            (self.nicknames.get(user), self.presences.get(user)).hash(&mut hasher);
+            (
+                self.nicknames.get(user),
+                self.friends_since.get(user),
+                self.presences.get(user),
+            )
+                .hash(&mut hasher);
         }
         let friend_list = shared(&mut kept.friend_list, hasher.finish(), || {
             self.friend_list(names).into()
@@ -1402,6 +1455,7 @@ impl Tracker {
                         names.user_name(user).unwrap_or("Discord user").to_owned()
                     }),
                     nickname,
+                    since: self.friends_since.get(user).copied(),
                     avatar: names.avatar(None, user),
                     presence: known.map(|known| known.presence),
                     activity: known.and_then(|known| known.activity.clone()),
@@ -1492,6 +1546,7 @@ impl Tracker {
                 names.avatar_hash(user),
                 self.nicknames.get(user),
                 self.presences.get(user),
+                names.looks(user).tag.map(|tag| tag.text),
             )
                 .hash(&mut hasher);
         }
@@ -1539,24 +1594,35 @@ impl Tracker {
             .get(&private.id)
             .into_iter()
             .flatten()
-            .map(|user| VoiceMember {
-                user_id: user.clone(),
-                name: name(user).to_owned(),
-                avatar: names.avatar(None, user),
-                muted: false,
-                deafened: false,
-                server_muted: false,
-                server_deafened: false,
-                streaming: false,
-                video: false,
-                elsewhere: false,
+            .map(|user| {
+                let looks = names.looks(user);
+                VoiceMember {
+                    user_id: user.clone(),
+                    name: name(user).to_owned(),
+                    avatar: names.avatar(None, user),
+                    muted: false,
+                    deafened: false,
+                    server_muted: false,
+                    server_deafened: false,
+                    streaming: false,
+                    video: false,
+                    elsewhere: false,
+                    tag: looks.tag,
+                    name_style: looks.name_style,
+                }
             })
             .collect();
         let preview = private
             .request
             .then(|| self.previews.get(&private.id).cloned())
             .flatten();
+        let tag = private
+            .recipients
+            .first()
+            .filter(|_| !private.group)
+            .and_then(|user| names.looks(user).tag);
         Conversation {
+            tag,
             id: private.id.clone(),
             name: title,
             avatar,
@@ -1659,6 +1725,9 @@ impl Tracker {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut voice: HashMap<String, Vec<VoiceMember>> = HashMap::new();
         for ((guild, user), entry) in &self.voice {
+            // The tag and name style are the user's own; Discord has no
+            // per-server ones, so the member list reads the same.
+            let looks = names.looks(user);
             voice
                 .entry(entry.channel.clone())
                 .or_default()
@@ -1673,6 +1742,8 @@ impl Tracker {
                     streaming: entry.streaming,
                     video: entry.video,
                     elsewhere: *user == self.me && self.elsewhere(entry),
+                    tag: looks.tag,
+                    name_style: looks.name_style,
                 });
         }
         for members in voice.values_mut() {
@@ -1758,6 +1829,7 @@ impl Tracker {
             user_id: Some(self.me.clone()),
             account: names.user_name(&self.me).map(|name| Account {
                 name: name.to_owned(),
+                username: names.username(&self.me).map(str::to_owned),
                 avatar: names.avatar(None, &self.me),
                 premium_type: self.premium,
                 mfa_enabled: self.mfa,
@@ -1780,6 +1852,7 @@ impl Tracker {
             soundboard_volume: self.soundboard_volume,
             join_sounds: self.join_sounds.clone(),
             playing: self.playing.clone(),
+            own_activities: self.own_activities.clone(),
             friend_requests: people.friend_requests,
             voice,
             listed: None,
@@ -1851,6 +1924,34 @@ mod tests {
                 .is_some_and(|icon| icon.contains("/icons/10/ghi.png"))
         );
         assert_eq!(server.voice_channels.len(), 2, "the channels stay");
+    }
+
+    #[test]
+    fn voice_members_wear_their_tag_and_name_style() {
+        let ready = json!({
+            "user": {"id": "1", "username": "me"},
+            "guilds": [{"id": "10", "properties": {"name": "Test"}, "channels": [
+                {"id": "11", "name": "Lounge", "type": 2, "position": 0},
+            ]}],
+        });
+        let mut tracker = Tracker::from_ready("1".into(), &ready, Default::default());
+        tracker.apply(
+            &Event::ReadySupplemental,
+            &json!({
+                "guilds": [{"id": "10", "voice_states": [
+                    {"user_id": "2", "channel_id": "11"},
+                ]}],
+                "merged_members": [[{"user_id": "2", "user": {
+                    "id": "2", "global_name": "Ann",
+                    "primary_guild": {"tag": "GUYS", "identity_enabled": true},
+                    "display_name_styles": {"font_id": 3, "effect_id": 2, "colors": [255]},
+                }}]],
+            }),
+        );
+        let ann = &tracker.snapshot().voice["11"][0];
+        assert_eq!(ann.tag.as_ref().map(|tag| tag.text.as_str()), Some("GUYS"));
+        let style = ann.name_style.as_ref().expect("a name style");
+        assert_eq!((style.font, style.effect), (3, 2));
     }
 
     #[test]
@@ -2210,6 +2311,36 @@ mod tests {
             ["Echo", "Bravo", "Delta", "Alpha", "Charlie"]
         );
         assert_eq!(tracker.snapshot().folders, [games]);
+    }
+
+    #[test]
+    fn the_accounts_own_activities_come_from_here_and_its_other_sessions() {
+        let ready = json!({
+            "user": {"id": "1", "username": "me"},
+            "session_id": "mine",
+            "sessions": [
+                {"session_id": "mine", "active": true, "activities": []},
+                {"session_id": "phone", "active": true, "activities": [{"type": 0, "name": "Chess"}]},
+            ],
+        });
+        let mut tracker = Tracker::from_ready("1".into(), &ready, Default::default());
+        let names = |tracker: &mut Tracker| -> Vec<String> {
+            let snapshot = tracker.snapshot();
+            let own = snapshot.own_activities.iter();
+            own.map(|activity| activity.name.to_string()).collect()
+        };
+        assert_eq!(names(&mut tracker), ["Chess"], "READY's sessions");
+        let song = json!([{"type": 4, "name": "Custom Status"}, {"type": 2, "name": "Spotify"}]);
+        assert!(tracker.shows_here(&song));
+        assert!(!tracker.shows_here(&song), "the same again changes nothing");
+        assert_eq!(names(&mut tracker), ["Chess", "Spotify"]);
+        assert!(tracker.apply(
+            &Event::SessionsReplace,
+            &json!([{"session_id": "mine", "active": true, "activities": song}]),
+        ));
+        assert_eq!(names(&mut tracker), ["Spotify"], "the phone left");
+        assert!(tracker.shows_here(&json!([])));
+        assert_eq!(names(&mut tracker), Vec::<String>::new());
     }
 
     #[test]
@@ -3112,6 +3243,31 @@ mod tests {
         );
         assert_eq!(tracker.snapshot().conversations.len(), 1);
         assert_eq!(tracker.kept.conversations.len(), 1);
+    }
+
+    #[test]
+    fn friends_keep_when_they_became_friends_until_they_stop_being() {
+        let ready = json!({
+            "user": {"id": "1", "username": "me"},
+            "guilds": [],
+            "relationships": [
+                {"id": "2", "type": 1, "since": "2026-02-21T12:00:00+00:00"},
+                {"id": "3", "type": 1},
+            ],
+        });
+        let mut tracker = Tracker::from_ready("1".into(), &ready, Default::default());
+        let since = |tracker: &mut Tracker, id: &str| {
+            let snapshot = tracker.snapshot();
+            let friend = snapshot
+                .friend_list
+                .iter()
+                .find(|friend| friend.user_id == id);
+            friend.and_then(|friend| friend.since)
+        };
+        assert!(since(&mut tracker, "2").is_some());
+        assert_eq!(since(&mut tracker, "3"), None);
+        tracker.apply(&Event::RelationshipRemove, &json!({"id": "2"}));
+        assert_eq!(since(&mut tracker, "2"), None);
     }
 
     #[test]

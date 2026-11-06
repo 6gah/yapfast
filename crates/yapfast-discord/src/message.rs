@@ -107,6 +107,12 @@ pub struct Message {
     /// The author is a bot or webhook, which Discord tags.
     #[serde(default)]
     pub bot: bool,
+    /// The server tag beside the author's name.
+    #[serde(default)]
+    pub tag: Option<ready::ServerTag>,
+    /// How the author styled their name.
+    #[serde(default)]
+    pub name_style: Option<ready::NameStyle>,
     /// Discord Markdown with mentions still as `<@id>`.
     pub content: String,
     /// Shown after the author's name instead of content, for joins, pins
@@ -734,6 +740,8 @@ pub fn parse(value: &Value) -> Option<Message> {
         author_id: author["id"].as_str()?.into(),
         author: author_name(value).into(),
         bot: author["bot"].as_bool().unwrap_or(false),
+        tag: ready::server_tag(author),
+        name_style: ready::name_style(author),
         content,
         notice: system.as_ref().and_then(|_| match kind {
             PINNED => Some(Notice::Pinned(
@@ -1093,11 +1101,22 @@ impl serde::Serialize for Text {
     }
 }
 
+/// A user's server tag, nameplate and name style, as far as they're known.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UserLooks {
+    pub tag: Option<ready::ServerTag>,
+    pub nameplate: Option<ready::Nameplate>,
+    pub name_style: Option<ready::NameStyle>,
+}
+
 /// Who is who, learned from the gateway and from messages.
 #[derive(Default)]
 pub struct Names {
     /// Display names by user id.
     users: HashMap<Id, String>,
+    /// What each user wears beside their name, for lists without member
+    /// objects to read it from, such as a group DM's.
+    looks: HashMap<Id, UserLooks>,
     /// Usernames by user id, such as `ann` for Ann.
     usernames: HashMap<Id, String>,
     /// The bots and apps among them, which nobody invites to a server.
@@ -1258,12 +1277,30 @@ impl Names {
         self.version
     }
 
+    /// What `user` wears beside their name, as far as it's known.
+    pub fn looks(&self, user: &str) -> UserLooks {
+        id(user)
+            .and_then(|user| self.looks.get(&user).cloned())
+            .unwrap_or_default()
+    }
+
     pub fn learn_user(&mut self, user: &Value) {
         let Some(id) = user["id"].as_str().and_then(id) else {
             return;
         };
         let known = self.saw(id);
         let mut learned = false;
+        // Partial user objects leave these out; null means they took it off.
+        let looks = self.looks.entry(id).or_default();
+        if user.get("primary_guild").is_some() {
+            looks.tag = ready::server_tag(user);
+        }
+        if user.get("collectibles").is_some() {
+            looks.nameplate = ready::nameplate(user);
+        }
+        if user.get("display_name_styles").is_some() {
+            looks.name_style = ready::name_style(user);
+        }
         if let Some(name) = ready::display_name(user) {
             learned |= changed(&mut self.users, id, Some(name.to_owned()));
         }
@@ -1655,10 +1692,18 @@ fn date_time(seconds: i64) -> String {
     local(seconds).format("%Y-%m-%d %H:%M").to_string()
 }
 
-/// A day in Unix milliseconds as profiles show it, in the local time zone: `6 Oct 2026`.
+/// A day in Unix milliseconds in the local time zone, for an embed's time: `6 Oct 2026`.
 pub fn date(ms: u64) -> String {
     local(i64::try_from(ms / 1000).unwrap_or(i64::MAX))
         .format("%-d %b %Y")
+        .to_string()
+}
+
+/// The day `ms` falls on as Discord's profiles and badges write it, such as
+/// `Aug 22, 2026`.
+pub fn long_date(ms: u64) -> String {
+    local(i64::try_from(ms / 1000).unwrap_or(i64::MAX))
+        .format("%b %-d, %Y")
         .to_string()
 }
 
@@ -2414,5 +2459,24 @@ mod tests {
         assert!(!own.mentions_me(me, Some(&server)));
         // A DM has no server: @everyone means nothing there.
         assert!(!message(json!({"mention_everyone": true})).mentions_me(me, None));
+    }
+}
+
+#[cfg(test)]
+mod user_looks_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_user_keeps_what_they_wear_until_an_object_says_otherwise() {
+        let mut names = Names::default();
+        names.learn_user(&json!({"id": "7", "username": "ann",
+            "display_name_styles": {"font_id": 12, "effect_id": 2, "colors": [255]}}));
+        assert_eq!(names.looks("7").name_style.unwrap().font, 12);
+        names.learn_user(&json!({"id": "7", "username": "ann"}));
+        assert!(names.looks("7").name_style.is_some(), "a partial object");
+        names.learn_user(&json!({"id": "7", "display_name_styles": null}));
+        assert!(names.looks("7").name_style.is_none(), "taken off");
+        assert_eq!(names.looks("8"), UserLooks::default());
     }
 }

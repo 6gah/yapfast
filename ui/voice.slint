@@ -1,7 +1,8 @@
 import { ScrollView, ListView } from "scrollview.slint";
-import { Theme, Middle, Label, Tip, Popup } from "theme.slint";
+import { Theme, Middle, Label, Tip, Popup, Looks } from "theme.slint";
 import { ActionButton, IconButton, Avatar, CallButton, VolumeSlider, MenuItem } from "controls.slint";
 import { EmojiCell, EmojiFace } from "messages.slint";
+import { NamePreset } from "names.slint";
 
 export struct PersonRow {
     id: string, name: string, status: string, muted: bool, deafened: bool, speaking: bool, connected: bool, initial: string, tint: color, picture: image,
@@ -19,6 +20,13 @@ export struct PersonRow {
     /// Who they are across calls, by Discord or Matrix user id, which their
     /// volumes are remembered by.
     person: string,
+    /// The server tag after their name, and the address of its picture.
+    tag-text: string, tag-icon: string,
+    /// The font they styled their name in, with its weight and letter spacing
+    /// in ems; empty for the UI's own.
+    name-font: string, name-weight: int, name-spacing: float,
+    /// How it moves and what colours it has, when they picked any.
+    name-effect: int, name-paint: NamePreset, has-name-paint: bool,
 }
 
 // Marks someone sharing their screen, as Discord's red LIVE tag does.
@@ -355,6 +363,10 @@ export component VoiceDock inherits Rectangle {
     in property <bool> camera-starting;
     /// The call has Discord's soundboard.
     in property <bool> can-soundboard;
+    /// Noise suppression is on; it can be turned on and off from the call.
+    in property <bool> noise-on;
+    in property <bool> can-noise;
+    callback toggle-noise;
     callback leave-voice;
     callback dismiss-voice-error;
     callback toggle-camera;
@@ -399,6 +411,13 @@ export component VoiceDock inherits Rectangle {
                     if root.voice-active: Text { text: root.voice-detail; color: Theme.muted; font-size: 13px; overflow: elide; }
                 }
                 LinkTouch { open(x, y, width, height) => { root.open-call-link(x, y, width, height); } }
+            }
+            // Beside leaving, as in Vesktop. Off shows red, so it isn't forgotten.
+            if root.voice-active && root.can-noise: IconButton {
+                icon: root.noise-on ? @image-url("icons/noise-bars.svg") : @image-url("icons/noise-bars-off.svg");
+                label: root.noise-on ? "Turn off noise suppression" : "Turn on noise suppression";
+                alert: !root.noise-on;
+                clicked => { root.toggle-noise(); }
             }
             if root.voice-active: IconButton {
                 icon: @image-url("icons/phone-off.svg"); label: "Leave voice"; danger: true;
@@ -660,6 +679,8 @@ component StageTile inherits Rectangle {
 // A tile's name, at its bottom left.
 component TileChip inherits Rectangle {
     in property <string> name;
+    /// The font they styled their name in; empty for the UI's own.
+    in property <string> name-font;
     in property <bool> live;
     /// Why their tile may look wrong, such as a lost connection.
     in property <string> note;
@@ -672,7 +693,7 @@ component TileChip inherits Rectangle {
     chip := HorizontalLayout {
         padding-left: 8px; padding-right: 8px; spacing: 6px;
         @children
-        Text { text: root.name; color: #ffffff; font-size: 14px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+        Text { text: root.name; font-family: Looks.name-styles ? root.name-font : ""; color: #ffffff; font-size: 14px; font-weight: 700; vertical-alignment: center; overflow: elide; }
         if root.live: Middle { LivePill { } }
         if root.note != "": Text { text: root.note; color: Theme.accent; font-size: 13px; vertical-alignment: center; overflow: elide; }
     }
@@ -870,7 +891,7 @@ export component ParticipantGrid inherits Flickable {
             }
         }
         TileChip {
-            tile-width: parent.width; tile-height: parent.height; name: stream.person.name; live: true;
+            tile-width: parent.width; tile-height: parent.height; name: stream.person.name; name-font: stream.person.name-font; live: true;
             Image { source: @image-url("icons/screen-share.svg"); width: 14px; image-fit: contain; colorize: #ffffff; }
         }
     }
@@ -930,7 +951,7 @@ export component ParticipantGrid inherits Flickable {
         TileChip {
             tile-width: parent.width; tile-height: parent.height;
             // A stream with a tile of its own is LIVE there.
-            name: person.name; live: person.live && (person.local || !person.video);
+            name: person.name; name-font: person.name-font; live: person.live && (person.local || !person.video);
             note: person.status != "Muted" && person.status != "Deafened" && person.status != "Speaking" && person.status != "Listening" ? person.status : "";
             if person.muted && !person.deafened: Image { source: @image-url("icons/mic-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }
             if person.deafened: Image { source: @image-url("icons/headphone-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }

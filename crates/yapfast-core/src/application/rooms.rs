@@ -742,7 +742,10 @@ impl Application {
             .into_iter()
             .filter(|url| self.requested_pictures.insert(url.clone()))
             .collect();
-        if wanted.is_empty() || self.state.preview {
+        if self.state.preview {
+            self.keep_test_pictures(wanted);
+            vec![]
+        } else if wanted.is_empty() {
             vec![]
         } else {
             vec![Effect::Backend(Command::Discord(DiscordCommand::Pictures(

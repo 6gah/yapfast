@@ -1,7 +1,19 @@
+import { NamePreset } from "names.slint";
 import { Palette } from "std-widgets.slint";
 import { ListView, Autoscroll, AutoscrollMarker } from "scrollview.slint";
 // The UI's typeface, Atkinson Hyperlegible Next; ExtraBold serves weight 900.
 import "fonts/AtkinsonHyperlegibleNext-Regular.ttf";
+import "fonts/names/CherryBombOne-Regular.ttf";
+import "fonts/names/Chicle-Regular.ttf";
+import "fonts/names/MuseoModerno.ttf";
+import "fonts/names/PixelifySans.ttf";
+import "fonts/names/ZillaSlab-SemiBold.ttf";
+import "fonts/names/PlaypenSans.ttf";
+import "fonts/names/Orbitron.ttf";
+import "fonts/names/NewRocker-Regular.ttf";
+import "fonts/names/Kalam-Bold.ttf";
+import "fonts/names/Neo-Castel.otf";
+import "fonts/names/Sinistre-Regular.ttf";
 import "fonts/AtkinsonHyperlegibleNext-Italic.ttf";
 import "fonts/AtkinsonHyperlegibleNext-Medium.ttf";
 import "fonts/AtkinsonHyperlegibleNext-Bold.ttf";
@@ -21,18 +33,18 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
 // Yapfast's window. Its parts live beside it, by area: theme.slint, controls.slint,
 // discord.slint, voice.slint, rail.slint, composer.slint, messages.slint,
 // settings.slint, people.slint, friends.slint, dialogs.slint and sign-in.slint.
-import { Theme, Tip, ReactionHover, Middle, Popup, PopupMotion } from "theme.slint";
+import { Theme, Tip, ReactionHover, Middle, Popup, PopupMotion, HoverDelay } from "theme.slint";
 import { TitleBar, ResizeEdges } from "title_bar.slint";
 import { GifPicker, GifTile, PickerTab } from "gifs.slint";
-import { ActionButton, IconButton, PingToggle, DeviceToggle, Avatar, TextField, MessagesSkeleton, ContextMenu, MenuItem, MenuRow, DeviceMenu, HeaderToggle, Banner, StatusText } from "controls.slint";
+import { ActionButton, IconButton, PingToggle, DeviceToggle, QuickDeviceMenu, Avatar, TextField, MessagesSkeleton, ContextMenu, MenuItem, MenuRow, DeviceMenu, HeaderToggle, Banner, StatusText, Looks } from "controls.slint";
 import { PersonRow, CallLink, CallLinkCard, LinkTouch, SignalIcon, VoiceDock, StreamPip, CallInvite, JoinVoice, ParticipantGrid, CallControls, IncomingCall, SwitchDialog, InputLevel, ShareMenu, ShareScreen, VolumeMenu, Soundboard, SoundRow } from "voice.slint";
-import { ServerRow, RoomRow, StatusDot, ServerRail, ServerHeader, RoomList } from "rail.slint";
+import { ServerRow, RoomRow, StatusDot, ServerRail, ServerHeader, RoomList, SidebarFold, ServerMark } from "rail.slint";
 import { StagedFile, StagedTile, Composer, MentionRow, MentionList, EmojiSuggestions, RequestBar } from "composer.slint";
 import { EmojiCell, EmojiRow, EmojiSection, MessageRow, ReactionToggle, EmojiButton, EmojiPicker, MessageMenu, MessageGallery, MessageStickers, FileCard, MessageContent, EmbedView, BotTag, NoConversation, ConversationStart, HistoryEdge, UnreadBar, PresentBar, ImageViewer, VideoViewer, VideoPlayer, Polls } from "messages.slint";
-import { SettingsRow, SettingsScreen, AccountSettings, AppearanceSettings, ThemeCard, ThemeColour, VoiceSettings, MessageSettings, NotificationSettings, SoundSettings, AdvancedSettings, DiscordLinkSettings, DiscordSettings, BlockedRow, GameActivitySettings, GameExecutable } from "settings.slint";
-import { MemberRow, ProfileData, ProfileServerRow, MemberPanel, ProfileCard, ServerCard, RoleCard } from "people.slint";
+import { Choices, SettingsRow, SettingsScreen, AccountSettings, AppearanceSettings, ThemeCard, ThemeColour, VoiceSettings, MessageSettings, NotificationSettings, SoundSettings, AdvancedSettings, DiscordLinkSettings, DiscordSettings, BlockedRow, GameActivitySettings, GameExecutable } from "settings.slint";
+import { ProfileEditorPage, ActivityRow, MemberRow, ProfileBadgeRow, ProfileData, ProfileServerRow, MemberPanel, ProfileCard, ProfileWindow, ServerCard, RoleCard } from "people.slint";
 import { RequestRow, FriendRow, FriendsScreen, HeaderTab, RequestsScreen, AddFriendDialog } from "friends.slint";
-import { ContactRow, PlaceRow, ReactionPill, ReactorRow, StatusDialog, NewDmDialog, ForwardDialog, QuickSwitcher, ReactionsDialog, StatusMenu, PersonPrompt, PersonDialog, LeavingDialog, PollAnswerDraft, PollDialog } from "dialogs.slint";
+import { ContactRow, PlaceRow, ReactionPill, ReactorRow, StatusDialog, NewDmDialog, ForwardDialog, QuickSwitcher, ReactionsDialog, StatusMenu, BadgesWindow, BadgeRow, PersonPrompt, PersonDialog, LeavingDialog, PollAnswerDraft, PollDialog } from "dialogs.slint";
 import { InvitePrompt, InviteDialog, JoinPrompt, JoinDialog, EventPrompt, EventDialog, GiftPrompt, GiftDialog, OAuthPrompt, OAuthDialog, ChannelPrompt, ChannelDialog, ProfileEditorPrompt, ProfileEditorDialog } from "server.slint";
 import { SignInScreen, VerifyBanner } from "sign-in.slint";
 import { BoostPicture, BoostPrompt, EngagementPrompt, ServerProfilePrompt, ServerSettingsPrompt, ServerSettingsScreen } from "server_settings.slint";
@@ -50,12 +62,14 @@ export { Theme, Badges, Popup } from "theme.slint";
 export { Autoscroll } from "scrollview.slint";
 export { PersonRow, CallLink, ShareScreen } from "voice.slint";
 export { ServerRow, RoomRow, FolderServer } from "rail.slint";
-export { PictureStore, Motion } from "controls.slint";
+export { PictureStore, Motion, Looks } from "controls.slint";
+export { ServerTagRow } from "server.slint";
+export { NameLetters, NamePreset } from "names.slint";
 export { StagedFile, MentionRow } from "composer.slint";
 export { EmojiCell, EmojiRow, EmojiSection, ReactionChip, ImageCell, FileCell, EmbedField, EmbedFieldRow, EmbedCard, CardButtonStyle, CardButton, TextBlock, CardRowKind, CardRow, ComponentCard, MessageRow, VideoPlayer, PollAction, PollAnswerRow, PollCard, Polls } from "messages.slint";
-export { MemberRow, ProfileRole, ProfileRoleRow, ProfileServerRow, ProfileFriendRow, ProfileData, ActivityRow, ActivityClock } from "people.slint";
+export { MemberRow, ProfileBadgeRow, ProfileEffectRow, ProfileRole, ProfileRoleRow, ProfileServerRow, ProfileFriendRow, ProfileData, ActivityRow, ActivityClock } from "people.slint";
 export { RequestRow, FriendRow } from "friends.slint";
-export { ContactRow, PlaceRow, ReactionPill, ReactorRow, PollAnswerDraft } from "dialogs.slint";
+export { ContactRow, PlaceRow, ReactionPill, ReactorRow, PollAnswerDraft, BadgeRow, BadgeLevelRow } from "dialogs.slint";
 export { FoundRow, PickRow } from "header.slint";
 export { GifTile, GifFavorites } from "gifs.slint";
 
@@ -91,6 +105,7 @@ export component YapfastWindow inherits Window {
     changed dark-theme => { Palette.color-scheme = self.dark-theme ? ColorScheme.dark : ColorScheme.light; }
     init => {
         Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
+        SidebarFold.amount = root.sidebar-fold;
     }
     in property <bool> workspace;
     in property <bool> preview;
@@ -147,6 +162,10 @@ export component YapfastWindow inherits Window {
     callback start-dm(int);
     callback close-new-dm;
     in property <string> sidebar-title;
+    /// The open server's initial and the address of its icon, which stand
+    /// for it at the top of the folded channel list.
+    in property <string> sidebar-initial;
+    in property <string> sidebar-picture-url;
     /// The Discord server whose name heads the sidebar and opens its menu;
     /// empty for DMs and Matrix servers. Its invite button shows when this
     /// account may invite to it.
@@ -210,7 +229,15 @@ export component YapfastWindow inherits Window {
     in-out property <string> profile-editor-colour;
     /// Opens the editor of the main Discord profile, as Edit Profile does.
     callback edit-profile;
+    callback open-profile-wishlist;
     callback write-profile(int, string);
+    callback choose-name-style(int, int, string);
+    callback edit-own-note;
+    callback choose-server-tag(string);
+    pure callback parse-hex(string) -> color;
+    pure callback format-hex(color) -> string;
+    pure callback key-part(string, int) -> string;
+    pure callback key-colour(string, int) -> color;
     callback pick-profile-picture(int);
     callback reset-profile-picture(int);
     callback unlock-nitro;
@@ -281,6 +308,50 @@ export component YapfastWindow inherits Window {
     in property <[MessageRow]> messages;
     in property <string> account;
     in property <string> account-name;
+    in property <string> account-id;
+    in property <string> account-handle;
+    /// The account's own profile, as its popout draws it.
+    in property <string> account-banner;
+    in property <color> account-accent;
+    in property <bool> account-has-accent;
+    in property <color> account-theme-top;
+    in property <color> account-theme-bottom;
+    in property <bool> account-has-theme;
+    in property <bool> account-theme-light;
+    in property <string> account-pronouns;
+    in property <string> account-name-font;
+    in property <int> account-name-weight;
+    in property <float> account-name-spacing;
+    in property <int> account-name-effect;
+    in property <NamePreset> account-name-paint;
+    in property <bool> account-has-name-paint;
+    in property <string> account-tag-text;
+    in property <string> account-tag-icon;
+    in property <[ProfileBadgeRow]> account-badges;
+    callback account-opened;
+    /// The account's badge window.
+    in property <bool> badges-open;
+    /// Which of its own the account's badge window shows first.
+    in property <int> badges-first;
+    /// Someone else's badge window, as BadgesWindow takes it.
+    in property <bool> person-badges-open;
+    in property <string> person-badges-name;
+    in property <string> person-badges-avatar;
+    in property <[BadgeRow]> person-badges;
+    in property <int> person-badges-first;
+    in property <string> person-badges-note;
+    in property <bool> person-badges-failed;
+    /// A badge on a profile was clicked: whose, and its number in the window.
+    callback open-person-badges(string, int);
+    callback close-person-badges;
+    callback retry-person-badges;
+    /// To the account's own badge window, on this badge if any.
+    callback view-own-badges(int);
+    in property <[BadgeRow]> badges-owned;
+    in property <[BadgeRow]> badges-available;
+    in property <string> badges-note;
+    callback open-badges;
+    callback close-badges;
     in property <string> account-initial;
     /// The Discord-only build's own status for the account's dot, as
     /// StatusDot takes it; empty to show the connection instead.
@@ -295,6 +366,8 @@ export component YapfastWindow inherits Window {
     in property <string> game-activity-name;
     in property <string> game-activity-duration;
     callback game-duration-due();
+    /// What the account shows it's doing, here and on its other devices.
+    in property <[ActivityRow]> account-activities;
     /// The address of the picture of the custom emoji in the account's status.
     in property <string> account-status-emoji;
     in property <string> storage;
@@ -629,6 +702,13 @@ export component YapfastWindow inherits Window {
         root.server-card-open = true;
     }
     callback enlarge-profile();
+    /// A tab of the full profile opened; see ProfileWindowTabs.
+    callback profile-tab-opened(int);
+    /// Join the call shown on a full profile, by its room.
+    callback join-profile-call(string);
+    /// The full profile's Message and Note, for someone by id.
+    callback message-person(string);
+    callback note-person(string);
     callback close-profile();
     /// Send someone a message in their DM from their card: who, and what.
     callback message-from-profile(string, string);
@@ -692,6 +772,8 @@ export component YapfastWindow inherits Window {
     in property <string> voice-error;
     in property <string> voice-warning;
     in property <[PersonRow]> participants;
+    /// Someone past the first three of `participants` is streaming.
+    in property <bool> participants-live-beyond;
     /// Each participant's newest camera picture, refreshed by stream-tick.
     in property <[image]> participant-frames;
     /// The call carries camera video; this account's camera is on; someone's
@@ -1022,10 +1104,22 @@ export component YapfastWindow inherits Window {
     in-out property <bool> strip-tracking: true;
     /// When animations play: 0 while Yapfast has the focus, 1 always, 2 never.
     in-out property <int> animate;
+    in-out property <bool> profile-effects: true;
     in-out property <bool> unmute-on-join;
     in-out property <bool> deafen-on-join;
     in-out property <bool> level-voice: true;
     in-out property <int> noise-suppression;
+    /// The suppression to turn back on, the one last used before Off.
+    property <int> noise-last: 0;
+    function toggle-noise() {
+        if root.noise-suppression == 2 {
+            root.noise-suppression = root.noise-last;
+        } else {
+            root.noise-last = root.noise-suppression;
+            root.noise-suppression = 2;
+        }
+        root.preferences-changed();
+    }
     in-out property <int> noise-strength;
     in-out property <bool> dereverb;
     in-out property <int> sensitivity: -60;
@@ -1112,6 +1206,56 @@ export component YapfastWindow inherits Window {
     // The sidebar keeps 180 to 380px. Dragging also leaves the conversation 420px;
     // the window width cannot enter this binding, because it depends on the layout.
     out property <length> sidebar-shown: max(180px, min(380px, root.sidebar-width));
+    // The side panels can fold to a sliver until pointed at.
+    property <bool> fold-channels: Looks.fold-channels;
+    property <bool> fold-members: Looks.fold-members;
+    property <bool> sidebar-edge-held;
+    /// Pinned, a folding panel stays unrolled: the pin in its header, or
+    /// Ctrl+Shift+B for the channel list.
+    in-out property <bool> sidebar-pinned;
+    in-out property <bool> members-pinned;
+    // Unrolled from the sliver, it stays while the pointer goes back over the server rail,
+    // and folds once the pointer leaves both.
+    property <bool> sidebar-stays;
+    // Where the pointer is asks for it, and it follows after the delays set
+    // in Appearance, so passing over it doesn't flicker.
+    property <bool> sidebar-wanted: (sidebar-hover.has-hover && (sidebar-hover.mouse-x >= 72px || root.sidebar-stays))
+        // Its edge lies just past it, so resting there to resize it keeps it.
+        || root.sidebar-edge-held
+        // A device menu opened from it takes the pointer, but the sidebar stays.
+        || (root.sidebar-stays && (root.input-open || root.output-open || root.menu-grace));
+    sidebar-delay := HoverDelay {
+        wanted: root.sidebar-wanted;
+        open-delay: Looks.unroll-delay * 1ms; close-delay: Looks.fold-delay * 1ms;
+    }
+    property <bool> sidebar-open: !root.fold-channels || root.sidebar-edge-held || root.sidebar-pinned || sidebar-delay.shown;
+    // It stays until it folds, so the pointer coming back over the rail while
+    // it waits to fold keeps it.
+    changed sidebar-open => {
+        if root.sidebar-open && root.fold-channels { root.sidebar-stays = true; }
+        if !root.sidebar-open { root.sidebar-stays = false; }
+    }
+    // Once its menu closes, the sidebar waits a moment for the pointer to be seen again,
+    // as the click that closed the menu hasn't told it yet, then folds if it's away.
+    property <bool> menu-grace;
+    function release-sidebar() {
+        if !root.input-open && !root.output-open { root.menu-grace = true; }
+    }
+    Timer {
+        interval: 250ms; running: root.menu-grace;
+        triggered => {
+            root.menu-grace = false;
+            if !sidebar-hover.has-hover { root.sidebar-stays = false; }
+        }
+    }
+    changed output-open => { root.release-sidebar(); }
+    property <length> sidebar-reserved: root.fold-channels ? 34px : root.sidebar-shown;
+    property <length> sidebar-unrolled: root.sidebar-open ? root.sidebar-shown : root.sidebar-reserved;
+    // 1 while the channel list is folded to its sliver, easing as it unrolls.
+    out property <float> sidebar-fold: root.fold-channels
+        ? clamp((root.sidebar-shown - root.sidebar-unrolled) / max(1px, root.sidebar-shown - root.sidebar-reserved), 0, 1) : 0;
+    changed sidebar-fold => { SidebarFold.amount = self.sidebar-fold; }
+    animate sidebar-unrolled { duration: Looks.fold; easing: ease; }
     in property <[string]> microphones;
     in property <[string]> speakers;
     in property <[string]> cameras;
@@ -1319,6 +1463,18 @@ export component YapfastWindow inherits Window {
     callback aside-resized(length);
 
     public function focus-composer() { composer.focus-input(); }
+    /// What's typed with nothing focused goes on the end of the message, as in Discord;
+    /// whether it could.
+    public function type-into-composer(text: string) -> bool {
+        if !root.workspace || !root.composer-enabled || root.settings-open || root.profile-open {
+            return false;
+        }
+        root.draft += text;
+        root.draft-edited(root.draft);
+        composer.focus-input();
+        composer.place-caret(1000000);
+        return true;
+    }
     // The menu is open on a message of the thread beside, whose composer
     // its Reply and Edit focus.
     property <bool> menu-aside;
@@ -1474,7 +1630,7 @@ export component YapfastWindow inherits Window {
     changed browse-open => { Tip.text = ""; }
     property <bool> profile-docked: root.profile-available && root.profile-panel && root.panel-profile-shown && !root.search-open && !root.aside-docked;
     // Search results take the place of the member list or the profile.
-    property <length> docked-width: root.search-open ? 420px : root.aside-docked ? root.aside-shown : (root.members-docked ? 240px : 0px) + (root.profile-docked ? 300px : 0px);
+    property <length> docked-width: root.search-open ? 420px : root.aside-docked ? root.aside-shown : (root.members-docked ? (root.fold-members ? 56px : 240px) : 0px) + (root.profile-docked ? 300px : 0px);
     // The pin and add buttons open their popovers under themselves.
     property <length> popover-x;
     property <length> popover-y;
@@ -1508,7 +1664,7 @@ export component YapfastWindow inherits Window {
     function open-settings() { input-menu.close(); output-menu.close(); root.settings-section = 1; root.settings-open = true; root.refresh-devices(); }
     property <bool> input-open: input-menu.is-open;
     property <bool> output-open: output-menu.is-open;
-    changed input-open => { root.input-level = 0; root.meter-note = ""; root.metering(root.input-open); }
+    changed input-open => { root.input-level = 0; root.meter-note = ""; root.metering(root.input-open); root.release-sidebar(); }
     Timer { interval: 50ms; running: root.input-open; triggered => { root.meter-tick(); } }
     // The Discord gate's meter runs while voice settings show it.
     property <bool> gate-metered: root.settings-open && root.settings-section == 1 && root.discord-linked && root.input-mode == 0;
@@ -1523,29 +1679,50 @@ export component YapfastWindow inherits Window {
     Timer { interval: 50ms; running: root.gate-metered; triggered => { root.gate-meter-tick(); } }
     Timer { interval: 33ms; running: root.sharing || root.watching || root.video-active || root.camera-filming || (root.call-video && (root.grid-shown || root.pip-shown)); triggered => { root.stream-tick(); } }
     input-menu := PopupWindow {
-        x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
-        y: max(8px, root.menu-y - self.height - 6px);
+        // Beside the folded pill, as Vesktop's, else above the account panel.
+        x: root.menu-beside ? root.menu-x + 60px : max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
+        y: root.menu-beside ? max(8px, min(root.height - self.height - 8px, root.menu-y + 32px - self.height))
+            : max(8px, root.menu-y - self.height - 6px);
         width: 280px;
         close-policy: PopupClosePolicy.close-on-click-outside;
-        DeviceMenu {
-            heading: "INPUT DEVICE"; devices: root.microphones; current: root.microphone-index;
+        QuickDeviceMenu {
+            kind: "Input"; devices: root.microphones; current: root.microphone-index;
             empty: "No microphones found. Connect one, then reopen this menu.";
+            volume <=> root.microphone-volume;
             select(index) => { root.select-microphone(index); }
             settings => { root.open-settings(); }
+            volume-changed => { root.call-volumes-changed(); }
+            volume-committed => { root.preferences-changed(); }
             Rectangle { height: 1px; background: Theme.line; }
             InputLevel { input-level: root.input-level; muted: root.muted; meter-note: root.meter-note; }
+            // The quick pick of noise suppression, as in Voice settings.
+            if root.discord-linked: Rectangle { height: 1px; background: Theme.line; }
+            if root.discord-linked: VerticalLayout {
+                padding-left: 8px; padding-right: 8px; padding-bottom: 4px; spacing: 6px;
+                Text { text: "NOISE SUPPRESSION"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+                Choices {
+                    label: "Noise suppression in Discord calls"; options: ["DeepFilterNet", "RNNoise", "Off"];
+                    current <=> root.noise-suppression;
+                    chosen => { root.preferences-changed(); }
+                }
+            }
         }
     }
     output-menu := PopupWindow {
-        x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
-        y: max(8px, root.menu-y - self.height - 6px);
+        // Beside the folded pill, as Vesktop's, else above the account panel.
+        x: root.menu-beside ? root.menu-x + 60px : max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
+        y: root.menu-beside ? max(8px, min(root.height - self.height - 8px, root.menu-y + 32px - self.height))
+            : max(8px, root.menu-y - self.height - 6px);
         width: 280px;
         close-policy: PopupClosePolicy.close-on-click-outside;
-        DeviceMenu {
-            heading: "OUTPUT DEVICE"; devices: root.speakers; current: root.speaker-index;
+        QuickDeviceMenu {
+            kind: "Output"; devices: root.speakers; current: root.speaker-index;
             empty: "No speakers found. Connect one, then reopen this menu.";
+            volume <=> root.speaker-volume;
             select(index) => { root.select-speaker(index); }
             settings => { root.open-settings(); }
+            volume-changed => { root.call-volumes-changed(); }
+            volume-committed => { root.preferences-changed(); }
         }
     }
     // The quality picked in the share menu, from the last choice each time it opens.
@@ -1707,10 +1884,16 @@ export component YapfastWindow inherits Window {
         }
     }
     // The status menu opens above the account panel, along its left edge.
-    function open-status-menu() {
-        root.menu-x = account-panel.absolute-position.x + 8px;
-        root.menu-y = account-panel.absolute-position.y;
+    // Folded, the pill's picture stands for the panel.
+    property <bool> dock-folded: root.fold-channels && Looks.folded-dock && !root.voice-visible;
+    property <bool> menu-beside;
+    property <float> dock-fold: root.dock-folded ? 1 : 0;
+    animate dock-fold { duration: Looks.fold; easing: ease; }
+    function open-status-menu(x: length, y: length) {
+        root.menu-x = x + 8px;
+        root.menu-y = y;
         root.game-duration-due();
+        root.account-opened();
         status-menu.show();
     }
     // The composer's +, where threads can start: upload a file or start one.
@@ -1740,18 +1923,66 @@ export component YapfastWindow inherits Window {
             }
         }
     }
+    property <length> activity-menu-x;
+    property <length> activity-menu-y;
+    activity-menu := PopupWindow {
+        x: min(root.width - self.width - 8px, root.activity-menu-x + 4px);
+        y: root.activity-menu-y - 8px;
+        width: 170px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+        Rectangle {
+            background: Theme.raised; border-radius: 8px; border-width: 1px; border-color: Theme.edge;
+            drop-shadow-blur: 16px; drop-shadow-color: #00000060;
+            VerticalLayout {
+                padding: 6px; spacing: 2px;
+                MenuItem { text: "View All Activity"; clicked => { activity-menu.close(); ProfileEditorPage.action = 1; } }
+                MenuItem { text: "Manage Privacy"; clicked => { activity-menu.close(); ProfileEditorPage.action = 2; } }
+            }
+        }
+    }
+    Timer {
+        interval: 1ms; running: ProfileEditorPage.action != 0;
+        triggered => {
+            let action = ProfileEditorPage.action;
+            ProfileEditorPage.action = 0;
+            status-menu.close();
+            root.close-profile();
+            if action == 1 {
+                ProfileEditorPage.wanted = 1;
+                root.account-opened();
+                root.edit-profile();
+            } else {
+                root.settings-section = 8;
+                root.settings-open = true;
+            }
+        }
+    }
     status-menu := PopupWindow {
-        width: 248px; height: status-menu-content.preferred-height;
+        width: status-menu-content.full-width; height: status-menu-content.card-height;
         x: max(8px, min(root.width - self.width - 8px, root.menu-x));
         y: max(8px, root.menu-y - self.height - 4px);
         close-policy: PopupClosePolicy.close-on-click-outside;
         status-menu-content := StatusMenu {
             status: root.discord-status; has-custom-status: root.has-custom-status;
+            name: root.account-name; handle: root.account-handle; initial: root.account-initial; tint: root.account-tint;
+            picture: root.account-picture; presence: root.account-presence;
+            custom-text: root.account-status; custom-emoji: root.account-status-emoji;
+            banner: root.account-banner; accent: root.account-accent; has-accent: root.account-has-accent;
+            theme-top: root.account-theme-top; theme-bottom: root.account-theme-bottom;
+            has-theme: root.account-has-theme; theme-light: root.account-theme-light;
+            name-font: root.account-name-font; name-weight: root.account-name-weight; name-spacing: root.account-name-spacing;
+            name-effect: root.account-name-effect; name-paint: root.account-name-paint; has-name-paint: root.account-has-name-paint;
+            pronouns: root.account-pronouns; tag-text: root.account-tag-text; tag-icon: root.account-tag-icon;
+            badges: root.account-badges;
+            open-link(link) => { root.open-link(link); status-menu.close(); }
+            open-badges => { root.open-badges(); status-menu.close(); }
+            copy-id => { root.copy-text(root.account-id); status-menu.close(); }
             game-name: root.game-activity-name; game-duration: root.game-activity-duration;
+            activities: root.account-activities;
             game-duration-due => { root.game-duration-due(); }
             choose(status) => { root.set-status(status); status-menu.close(); }
             custom-status => { root.open-status(); status-menu.close(); }
-            edit-profile => { root.edit-profile(); status-menu.close(); }
+            edit-profile => { root.account-opened(); root.edit-profile(); status-menu.close(); }
         }
     }
     function open-menu(message: MessageRow) {
@@ -2031,8 +2262,22 @@ export component YapfastWindow inherits Window {
         spacing: 0px;
         // Navigation: the rail and the sidebar, with the voice and account dock across both.
         Rectangle {
-            width: 72px + root.sidebar-shown; background: Theme.rail;
+            width: 72px + root.sidebar-reserved; z: 10;
+            // Unrolled over the conversation, it casts a soft shadow on it.
+            Rectangle {
+                x: 72px + root.sidebar-unrolled; width: 12px;
+                opacity: root.fold-channels && Looks.unrolled-shadow ? 1 - root.sidebar-fold : 0;
+                visible: self.opacity > 0;
+                background: @linear-gradient(90deg, #00000059 0%, #00000000 100%);
+            }
+            // The sidebar folds to a sliver, and unrolls over the conversation
+            // while the pointer is on it. Its contents keep their width.
+            sidebar-hover := TouchArea {
+                x: 0px; width: 72px + root.sidebar-unrolled;
+                Rectangle {
+                    clip: true; background: Theme.rail;
             VerticalLayout {
+                x: 0px; width: 72px + root.sidebar-shown;
                 spacing: 0px;
                 HorizontalLayout {
                     vertical-stretch: 1; spacing: 0px;
@@ -2040,12 +2285,13 @@ export component YapfastWindow inherits Window {
                     ServerRail {
                         dms-selected: root.dms-selected; dms-unread: root.dms-unread; dms-badge: root.dms-badge; servers: root.servers;
                         matrix-build: root.matrix-build;
+                        reserve-bottom: root.dock-folded ? 160px : 0px;
                         navigate-dms => { root.navigate-dms(); }
                         navigate-server(id) => { root.navigate-server(id); }
                         toggle-folder(id) => { root.toggle-folder(id); }
                         open-dm(id) => { root.open-conversation(id); }
                         open-server-menu(id, x, y) => { root.open-context-menu(id, false, x, y); }
-                        can-join: root.can-join-server;
+                        can-join: root.can-join-server && !root.dock-folded;
                         join-server => { root.open-join-server(); }
                     }
                     // Channel sidebar: a lighter sheet held by the rail and the dock.
@@ -2054,34 +2300,46 @@ export component YapfastWindow inherits Window {
                         border-top-left-radius: 10px; border-bottom-left-radius: 10px;
                         clip: true;
                         VerticalLayout {
+                            // Folded, it moves left so its rows' icons sit in the sliver.
+                            x: -9px * root.sidebar-fold; width: parent.width;
                             spacing: 0px;
-                            Rectangle {
-                                height: 48px;
-                                if root.header-server == "": Text { x: 16px; width: parent.width - (root.dms-selected && !root.preview ? (root.discord-linked ? 88px : 56px) : 32px); text: root.sidebar-title; font-size: 16px; font-weight: 700; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                            sidebar-header := Rectangle {
+                                height: 48px; opacity: 1 - root.sidebar-fold;
+                                // The pin, at the right, keeps a folding list unrolled.
+                                property <length> pin-room: root.fold-channels && Looks.pin-button ? 32px : 0px;
+                                if root.header-server == "": Text { x: 16px; width: parent.width - sidebar-header.pin-room - (root.dms-selected && !root.preview ? (root.discord-linked ? 88px : 56px) : 32px); text: root.sidebar-title; font-size: 16px; font-weight: 700; color: Theme.text; vertical-alignment: center; overflow: elide; }
                                 if root.header-server != "": server-header := ServerHeader {
-                                    x: 8px; y: 8px; width: parent.width - 16px - (root.header-invite ? 32px : 0px); height: 32px;
+                                    x: 8px; y: 8px; width: parent.width - 16px - sidebar-header.pin-room - (root.header-invite ? 32px : 0px); height: 32px;
                                     name: root.sidebar-title; open: root.header-menu-open;
                                     clicked => { root.open-header-menu(self.absolute-position.x, self.absolute-position.y + self.height + 6px); }
                                 }
                                 if root.header-server != "" && root.header-invite: IconButton {
-                                    x: parent.width - self.width - 10px;
+                                    x: parent.width - sidebar-header.pin-room - self.width - 10px;
                                     icon: @image-url("icons/user-plus.svg"); label: "Invite to server"; size: 28px; glyph: 18px; tip-side: 2;
                                     clicked => { root.open-invite(root.header-server); }
                                 }
                                 if root.dms-selected && !root.preview && root.discord-linked: IconButton {
-                                    x: parent.width - 2 * self.width - 14px;
+                                    x: parent.width - sidebar-header.pin-room - 2 * self.width - 14px;
                                     icon: @image-url("icons/user-plus.svg"); label: "Add a friend"; size: 28px; glyph: 18px; tip-side: 2;
                                     clicked => { root.open-add-friend(); }
                                 }
                                 if root.dms-selected && !root.preview: IconButton {
-                                    x: parent.width - self.width - 10px;
+                                    x: parent.width - sidebar-header.pin-room - self.width - 10px;
                                     icon: @image-url("icons/square-pen.svg"); label: "New message"; size: 28px; glyph: 18px; tip-side: 2;
                                     clicked => { root.open-new-dm(); }
+                                }
+                                if sidebar-header.pin-room > 0: IconButton {
+                                    x: parent.width - self.width - 10px;
+                                    icon: root.sidebar-pinned ? @image-url("icons/pin-off.svg") : @image-url("icons/pin.svg");
+                                    label: root.sidebar-pinned ? "Let it fold (Ctrl+Shift+B)" : "Keep open (Ctrl+Shift+B)";
+                                    tint: root.sidebar-pinned ? Theme.accent : Theme.secondary;
+                                    size: 28px; glyph: 16px; tip-side: 2;
+                                    clicked => { root.sidebar-pinned = !root.sidebar-pinned; }
                                 }
                                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.edge; }
                             }
                             HorizontalLayout {
-                                padding: 10px; padding-bottom: 6px;
+                                padding: 10px; padding-bottom: 6px; opacity: 1 - root.sidebar-fold;
                                 TextField {
                                     min-height: 30px; text-size: 14px; pad: 8px; fill: Theme.sunken; ring: false;
                                     placeholder: root.filter-placeholder; text <=> root.filter; label: root.filter-placeholder;
@@ -2093,7 +2351,7 @@ export component YapfastWindow inherits Window {
                                 friends-open: root.friends-open; requests-current: root.requests-current; requests-badge: root.requests-badge;
                                 browse-offered: root.browse-offered; browsing: root.browse-open;
                                 open-browse => { root.open-browse(); }
-                                voice-channel: root.voice-channel; participants: root.participants; sidebar-empty: root.sidebar-empty;
+                                voice-channel: root.voice-channel; participants: root.participants; participants-live-beyond: root.participants-live-beyond; sidebar-empty: root.sidebar-empty;
                                 select-room(id) => { root.select-room(id); }
                                 open-voice(id) => { root.open-conversation(id); }
                                 open-chat(id) => { root.open-chat(id); }
@@ -2119,6 +2377,19 @@ export component YapfastWindow inherits Window {
                                 }
                             }
                         }
+                        // Folded, the server's icon, or on the DM home the logo, stands
+                        // for the header, in the sliver.
+                        if root.fold-channels && Looks.folded-server: Rectangle {
+                            x: 0px; y: 0px; width: 34px; height: 48px;
+                            opacity: root.sidebar-fold; visible: self.opacity > 0;
+                            if root.dms-selected: Image {
+                                source: @image-url("icons/logo.svg"); width: 24px; height: 24px; colorize: Theme.accent;
+                            }
+                            if !root.dms-selected: ServerMark {
+                                initial: root.sidebar-initial; picture-url: root.sidebar-picture-url; label: root.sidebar-title;
+                            }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.edge; }
+                        }
                     }
                 }
                 // The dock spans the rail and the sidebar. Its avatar and voice icon sit on the
@@ -2132,6 +2403,8 @@ export component YapfastWindow inherits Window {
                     share-watchers: root.share-viewers.length;
                     can-film: root.can-film; camera-on: root.camera-on; camera-starting: root.camera-starting;
                     can-soundboard: root.can-soundboard;
+                    noise-on: root.noise-suppression != 2; can-noise: root.discord-linked;
+                    toggle-noise => { root.toggle-noise(); }
                     leave-voice => { root.leave-voice(); }
                     dismiss-voice-error => { root.dismiss-voice-error(); }
                     toggle-camera => { root.toggle-camera(); }
@@ -2140,9 +2413,14 @@ export component YapfastWindow inherits Window {
                     open-soundboard(x, y) => { root.open-soundboard(x, y); }
                     open-call-link(x, y, width, height) => { root.open-call-link(x, y, width, height); }
                 }
-                // Account panel.
-                account-panel := Rectangle {
-                    height: 56px; background: Theme.panel;
+                // Account panel. With the channel list folded it stands in the rail as a
+                // pill, top to bottom: settings, output, input and the account's picture.
+                // The pill below stands in for it while the channel list is folded.
+                dock := Rectangle {
+                    height: 56px;
+                    account-panel := Rectangle {
+                    y: parent.height - 56px; height: 56px; background: Theme.panel;
+                    opacity: 1 - root.dock-fold; visible: root.dock-fold < 1;
                     if root.voice-visible: Rectangle { x: 12px; y: 0px; width: parent.width - 24px; height: 1px; background: Theme.line; }
                     HorizontalLayout {
                         padding-right: 8px; spacing: 2px;
@@ -2161,7 +2439,7 @@ export component YapfastWindow inherits Window {
                             }
                             if root.discord-linked: TouchArea {
                                 mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.open-status-menu(); }
+                                clicked => { root.open-status-menu(account-panel.absolute-position.x, account-panel.absolute-position.y); }
                             }
                         }
                         // With Discord linked, the avatar and name open the status menu.
@@ -2171,7 +2449,7 @@ export component YapfastWindow inherits Window {
                             accessible-role: button;
                             accessible-enabled: root.discord-linked;
                             accessible-label: root.account-name + ", " + root.account-status + (root.discord-linked ? ". Set your status" : "");
-                            accessible-action-default => { if root.discord-linked { root.open-status-menu(); } }
+                            accessible-action-default => { if root.discord-linked { root.open-status-menu(account-panel.absolute-position.x, account-panel.absolute-position.y); } }
                             VerticalLayout {
                                 alignment: center; padding-left: 6px; padding-right: 6px;
                                 Text { text: root.account-name; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
@@ -2179,7 +2457,7 @@ export component YapfastWindow inherits Window {
                             }
                             account-touch := TouchArea {
                                 enabled: root.discord-linked; mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.open-status-menu(); }
+                                clicked => { root.open-status-menu(account-panel.absolute-position.x, account-panel.absolute-position.y); }
                             }
                         }
                         DeviceToggle {
@@ -2191,7 +2469,7 @@ export component YapfastWindow inherits Window {
                             clicked => { root.toggle-mute(); }
                             menu => {
                                 root.menu-x = self.absolute-position.x; root.menu-y = self.absolute-position.y + (self.height - 32px) / 2;
-                                root.refresh-devices(); input-menu.show();
+                                root.menu-beside = false; root.refresh-devices(); input-menu.show();
                             }
                         }
                         DeviceToggle {
@@ -2203,7 +2481,7 @@ export component YapfastWindow inherits Window {
                             clicked => { root.toggle-deafen(); }
                             menu => {
                                 root.menu-x = self.absolute-position.x; root.menu-y = self.absolute-position.y + (self.height - 32px) / 2;
-                                root.refresh-devices(); output-menu.show();
+                                root.menu-beside = false; root.refresh-devices(); output-menu.show();
                             }
                         }
                         if !root.preview && !root.online: IconButton {
@@ -2215,6 +2493,103 @@ export component YapfastWindow inherits Window {
                             clicked => { root.settings-open = true; root.refresh-devices(); }
                         }
                     }
+                    }
+                }
+            }
+                // With the channel list folded, the account panel stands in the rail as a
+                // pill, top to bottom: settings, output, input and the account's picture. It
+                // lies over the rail, so it moves nothing the pointer is on; the two fade into
+                // each other as the sidebar unrolls, at its pace.
+                folded-dock := Rectangle {
+                    // Pointed at, it grows upward to show joining a server above settings.
+                    property <bool> joinable: root.can-join-server && pill-hover.has-hover;
+                    property <length> join-room: self.joinable ? 44px : 0px;
+                    animate join-room { duration: Looks.settle; easing: ease-out; }
+                    x: 8px; y: parent.height - self.height - 8px; width: 56px; height: 208px + self.join-room;
+                    opacity: root.dock-fold; visible: root.dock-fold > 0;
+                    // Solid, so the servers it grows over don't show through.
+                    background: Theme.rail;
+                    border-radius: 10px; border-width: 1px; border-color: Theme.line;
+                    clip: true;
+                    // Wraps the rest, so pointing at a button inside still counts as pointing at it.
+                    pill-hover := TouchArea {
+                    Rectangle {
+                        y: 6px; height: 40px; opacity: folded-dock.join-room / 44px;
+                        visible: folded-dock.join-room > 0;
+                        HorizontalLayout {
+                            alignment: center;
+                            IconButton {
+                                icon: @image-url("icons/circle-plus.svg"); label: "Join a server"; tint: Theme.accent;
+                                clicked => { root.open-join-server(); }
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        y: folded-dock.join-room; height: 208px;
+                        alignment: space-around; padding-top: 6px; padding-bottom: 8px;
+                        HorizontalLayout {
+                            alignment: center;
+                            if !root.preview && !root.online: IconButton {
+                                icon: @image-url("icons/refresh-cw.svg"); label: "Reconnect"; enabled: !root.busy;
+                                clicked => { root.retry-sync(); }
+                            }
+                            if root.preview || root.online: IconButton {
+                                icon: @image-url("icons/settings.svg"); label: "Settings";
+                                clicked => { root.settings-open = true; root.refresh-devices(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            DeviceToggle {
+                                caret-on-hover: true;
+                                icon: root.shown-deafened ? @image-url("icons/headphone-off.svg") : @image-url("icons/headphones.svg");
+                                label: root.voice-active ? (root.deafened ? "Undeafen" : "Deafen") : root.deafen-on-join ? "Join calls undeafened" : "Join calls deafened";
+                                alert: root.shown-deafened;
+                                menu-label: "Output options"; open: root.output-open;
+                                enabled: root.voice-ready || !root.voice-active;
+                                clicked => { root.toggle-deafen(); }
+                                menu => {
+                                    root.menu-x = self.absolute-position.x; root.menu-y = self.absolute-position.y + (self.height - 32px) / 2;
+                                    root.menu-beside = true; root.menu-beside = false; root.refresh-devices(); output-menu.show();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            DeviceToggle {
+                                caret-on-hover: true;
+                                icon: root.shown-muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+                                label: root.voice-active ? (root.muted ? "Unmute" : "Mute") : root.shown-muted ? "Join calls unmuted" : "Join calls muted";
+                                alert: root.shown-muted;
+                                menu-label: "Input options"; open: root.input-open;
+                                enabled: root.voice-ready || !root.voice-active;
+                                clicked => { root.toggle-mute(); }
+                                menu => {
+                                    root.menu-x = self.absolute-position.x; root.menu-y = self.absolute-position.y + (self.height - 32px) / 2;
+                                    root.menu-beside = true; root.menu-beside = false; root.refresh-devices(); input-menu.show();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            folded-account := Rectangle {
+                                width: 40px; height: 40px;
+                                Avatar { size: 40px; initial: root.account-initial; tint: root.account-tint; picture: root.account-picture; }
+                                if root.account-presence != "": StatusDot {
+                                    x: 24px; y: 24px; presence: root.account-presence; ring: Theme.rail;
+                                }
+                                accessible-role: button;
+                                accessible-label: root.account-name + ", " + root.account-status;
+                                accessible-action-default => { if root.discord-linked { root.open-status-menu(folded-account.absolute-position.x - 8px, folded-account.absolute-position.y); } }
+                                TouchArea {
+                                    enabled: root.discord-linked; mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.open-status-menu(folded-account.absolute-position.x - 8px, folded-account.absolute-position.y); }
+                                }
+                            }
+                        }
+                    }
+                    }
+                }
                 }
             }
         }
@@ -2765,6 +3140,7 @@ export component YapfastWindow inherits Window {
                                                         Rectangle { horizontal-stretch: 1; Rectangle { height: 1px; background: message.unread-start ? Theme.accent : Theme.line; } }
                                                     }
                                                     MessageContent {
+                                                        in-server: !root.room-direct;
                                                         message: message; active-item: root.active-item; preview: root.preview; composer-enabled: root.composer-enabled;
                                                         emoji-font: root.emoji-font; message-font-size: root.message-font-size;
                                                         author-card(item, sender, x, y, width, height) => { root.author-card(item, sender, x, y, width, height); }
@@ -2840,6 +3216,8 @@ export component YapfastWindow inherits Window {
                                                         }
                                                         if message.own && message.can-edit && root.composer-enabled: IconButton { icon: @image-url("icons/pencil.svg"); label: "Edit"; clicked => { root.edit(message.item); root.focus-composer(); } }
                                                         if !(message.own && message.can-edit) && message.can-reply && root.composer-enabled: IconButton { icon: @image-url("icons/reply.svg"); label: "Reply"; clicked => { root.reply(message.item); root.focus-composer(); } }
+                                                        // Beside reply, as in Discord.
+                                                        if message.can-forward && root.forward-allowed: IconButton { icon: @image-url("icons/forward.svg"); label: "Forward"; clicked => { root.start-forward(message.item); } }
                                                         IconButton {
                                                             icon: @image-url("icons/ellipsis.svg"); label: "More";
                                                             clicked => {
@@ -3028,6 +3406,12 @@ export component YapfastWindow inherits Window {
                                             }
                                             up-from-empty => { root.edit-last(); }
                                             up-to-messages => { root.browse-messages(); }
+                                            // Escape stops a reply or an edit, as in Discord.
+                                            escaped => {
+                                                if root.compose-label == "" { return false; }
+                                                root.cancel-compose();
+                                                return true;
+                                            }
                                             paste => { root.paste-into-composer(); }
                                             expressions(tab) => {
                                                 if tab == 0 && !root.can-pick-gifs { return; }
@@ -3162,10 +3546,65 @@ export component YapfastWindow inherits Window {
                         view-image(id, index) => { root.view-image(id, index); }
                         save-attachment(id, index) => { root.save-attachment(id, index); }
                     }
-                    if root.members-docked: MemberPanel {
-                        width: 240px; rows: root.roster; note: root.roster-note; selected: root.profile-member;
-                        open-profile(id, y) => { root.profile-y = y; root.profile-at-pointer = false; root.show-profile(id); }
-                        open-member-menu(id, x, y) => { root.open-context-menu(id, true, x, y); }
+                    if root.members-docked: Rectangle {
+                        width: root.fold-members ? 56px : 240px; z: 10;
+                        // Folded to its avatars, unrolling leftward over the conversation.
+                        members-hover := TouchArea {
+                            // It stays open under the card of someone clicked in it, whose
+                            // click-away layer takes the pointer.
+                            property <bool> unfolded: !root.fold-members || root.members-pinned || members-delay.shown;
+                            // Once that card closes, it waits a moment for the pointer to be seen
+                            // again, as the click that closed it hasn't told it yet.
+                            property <bool> closing-grace;
+                            property <bool> card-open: root.profile-open && !root.profile-at-pointer;
+                            changed card-open => { if !self.card-open { self.closing-grace = true; } }
+                            Timer {
+                                interval: 250ms; running: parent.closing-grace;
+                                triggered => { parent.closing-grace = false; }
+                            }
+                            // The pointer asks for it, and it follows after the delays set in Appearance.
+                            members-delay := HoverDelay {
+                                wanted: members-hover.has-hover || members-hover.card-open || members-hover.closing-grace;
+                                open-delay: Looks.unroll-delay * 1ms; close-delay: Looks.fold-delay * 1ms;
+                            }
+                            property <length> unrolled: !root.fold-members ? 240px : self.unfolded ? 250px : 56px;
+                            animate unrolled { duration: Looks.fold; easing: ease; }
+                            // 1 while folded to its avatars, easing to 0 as it unrolls.
+                            property <float> fold: root.fold-members ? clamp((250px - self.unrolled) / 194px, 0, 1) : 0;
+                            x: parent.width - self.width; width: self.unrolled;
+                            // Unrolled over the conversation, it casts a soft shadow on it.
+                            Rectangle {
+                                x: -12px; width: 12px;
+                                opacity: root.fold-members && Looks.unrolled-shadow ? 1 - members-hover.fold : 0;
+                                visible: self.opacity > 0;
+                                background: @linear-gradient(270deg, #00000059 0%, #00000000 100%);
+                            }
+                            Rectangle {
+                                clip: true;
+                                MemberPanel {
+                                    in-server: !root.room-direct;
+                                    x: 0px; width: root.fold-members ? 250px : 240px; unfolded: members-hover.unfolded; fold: members-hover.fold;
+                                    rows: root.roster; note: root.roster-note; selected: root.profile-member;
+                                    // Room at the top right for the pin, beside the first heading.
+                                    pin-room: root.fold-members && Looks.pin-button ? 36px : 0px;
+                                    background: root.fold-members ? Theme.chat : Theme.sidebar;
+                                    open-profile(id, y) => { root.profile-y = y; root.profile-at-pointer = false; root.show-profile(id); }
+                                    open-member-menu(id, x, y) => { root.open-context-menu(id, true, x, y); }
+                                }
+                                // The pin, at the top right while unrolled, keeps it so.
+                                // Its height is its own: left to fill the panel, its face sat
+                                // halfway down and its pointer area ran the panel's length.
+                                if root.fold-members && Looks.pin-button: IconButton {
+                                    x: parent.width - self.width - 8px; y: 6px; height: self.size;
+                                    opacity: 1 - members-hover.fold; visible: self.opacity > 0;
+                                    icon: root.members-pinned ? @image-url("icons/pin-off.svg") : @image-url("icons/pin.svg");
+                                    label: root.members-pinned ? "Let it fold" : "Keep open";
+                                    tint: root.members-pinned ? Theme.accent : Theme.secondary;
+                                    fill: Theme.chat; size: 28px; glyph: 16px; tip-side: 2;
+                                    clicked => { root.members-pinned = !root.members-pinned; }
+                                }
+                            }
+                        }
                     }
                     if root.profile-docked: Rectangle {
                         width: 300px;
@@ -3174,6 +3613,7 @@ export component YapfastWindow inherits Window {
                             data: root.panel-profile;
                             enlarge => { root.enlarge-panel-profile(); }
                             befriend => { root.befriend(root.panel-profile.id); }
+                            open-menu(x, y) => { root.open-context-menu(root.panel-profile.id, true, x, y); }
                             open-link(link) => { root.open-link(link); }
                             open-server(server, x, y, width, height) => { root.open-server-card(server, x, y, width, height); }
                             open-friend(id, x, y, width, height) => {
@@ -3194,9 +3634,10 @@ export component YapfastWindow inherits Window {
     }
     // The edge between sidebar and conversation resizes the sidebar. A double-click
     // restores the default width.
-    if root.workspace: TouchArea {
+    if root.workspace && root.sidebar-open: TouchArea {
         x: 72px + root.sidebar-shown - 4px; y: root.title-height; width: 8px; height: root.height - root.title-height;
         mouse-cursor: ew-resize;
+        changed has-hover => { root.sidebar-edge-held = self.has-hover; }
         moved => {
             if self.pressed {
                 root.sidebar-width = max(180px, min(380px, root.width - 72px - 420px - root.docked-width, root.sidebar-shown + self.mouse-x - self.pressed-x));
@@ -3219,7 +3660,7 @@ export component YapfastWindow inherits Window {
         mouse-cursor: ew-resize;
         moved => {
             if self.pressed {
-                root.aside-width = max(320px, min(800px, root.width - 72px - root.sidebar-shown - 420px, root.aside-shown - (self.mouse-x - self.pressed-x)));
+                root.aside-width = max(320px, min(800px, root.width - 72px - root.sidebar-reserved - 420px, root.aside-shown - (self.mouse-x - self.pressed-x)));
             }
         }
         pointer-event(event) => {
@@ -3241,7 +3682,7 @@ export component YapfastWindow inherits Window {
     property <bool> pip-left;
     property <bool> pip-bottom;
     if root.pip-shown: StreamPip {
-        property <length> left: 72px + root.sidebar-shown + 16px;
+        property <length> left: 72px + root.sidebar-reserved + 16px;
         property <length> right: root.width - self.width - 16px;
         property <length> top: root.title-height + 48px + 16px;
         property <length> bottom: root.height - self.height - 16px;
@@ -3353,10 +3794,12 @@ export component YapfastWindow inherits Window {
             discord-linked: root.discord-linked; has-custom-status: root.has-custom-status;
             retry-sync => { root.retry-sync(); }
             set-custom-status => { root.settings-open = false; root.open-status(); }
-            edit-profile => { root.settings-open = false; root.edit-profile(); }
+            edit-profile => { root.settings-open = false; root.account-opened(); root.edit-profile(); }
             sign-out => { root.settings-open = false; root.logout(); }
         }
         if root.settings-section == 7: AppearanceSettings {
+            profile-effects <=> root.profile-effects;
+            preferences-changed => { root.preferences-changed(); }
             themes: root.themes; theme-id: root.theme-id;
             editor: root.theme-editor; colours: root.theme-colours;
             theme-name <=> root.theme-name; theme-dark <=> root.theme-dark;
@@ -3632,13 +4075,17 @@ export component YapfastWindow inherits Window {
             width: 300px; limit: root.height - root.title-height - 16px;
             x: root.profile-at-pointer
                 ? root.beside(root.anchor-x, root.anchor-width, self.width)
-                : root.width - 240px - 8px - self.width;
+                : root.width - (root.fold-members ? 250px : 240px) - 8px - self.width;
             y: max(root.title-height + 8px, min(root.height - self.height - 8px, (root.profile-at-pointer ? root.anchor-y - 8px : root.profile-y - 16px)));
             data: root.profile;
             enlarge => { root.enlarge-profile(); }
             close => { root.close-profile(); }
             befriend => { root.befriend(root.profile.id); }
+            open-menu(x, y) => { root.open-context-menu(root.profile.id, true, x, y); }
             open-link(link) => { root.open-link(link); }
+            open-badge(badge) => { root.open-person-badges(root.profile.id, badge); }
+            activity-more(x, y) => { root.activity-menu-x = x; root.activity-menu-y = y; activity-menu.show(); }
+            edit-profile => { root.close-profile(); root.account-opened(); root.edit-profile(); }
             send-message(text) => { root.message-from-profile(root.profile.id, text); }
         }
     }
@@ -3654,18 +4101,69 @@ export component YapfastWindow inherits Window {
                 return reject;
             }
         }
-        ProfileCard {
+        ProfileWindow {
             opacity: Popup.opacity(large-profile-motion.amount); transform-scale: Popup.scale(large-profile-motion.amount);
-            large: true;
-            width: min(600px, root.width - 64px); limit: root.height - 64px;
+            room-width: parent.width; room-height: parent.height;
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
             data: root.profile;
             close => { root.close-profile(); }
             befriend => { root.befriend(root.profile.id); }
+            open-menu(x, y) => { root.open-context-menu(root.profile.id, true, x, y); }
             open-link(link) => { root.open-link(link); }
+            open-badge(badge) => { root.open-person-badges(root.profile.id, badge); }
+            message => { root.message-person(root.profile.id); root.close-profile(); }
+            open-note => { root.note-person(root.profile.id); }
+            edit-profile => { root.close-profile(); root.account-opened(); root.edit-profile(); }
+            tab-opened(tab) => { root.profile-tab-opened(tab); }
+            join-call(room) => { root.close-profile(); root.join-profile-call(room); }
             open-server(server, x, y, width, height) => { root.open-server-card(server, x, y, width, height); }
             // In the full profile, a friend's opens full too.
             open-friend(id, x, y, width, height) => { root.show-friend-profile(id, true); }
+        }
+    }
+    // The account's badges, over the window.
+    badges-motion := PopupMotion { open: root.badges-open; }
+    if badges-motion.shown: Rectangle {
+        background: rgba(0, 0, 0, 0.7 * badges-motion.amount);
+        TouchArea { clicked => { root.close-badges(); } }
+        FocusScope {
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape { root.close-badges(); return accept; }
+                return reject;
+            }
+        }
+        BadgesWindow {
+            opacity: Popup.opacity(badges-motion.amount); transform-scale: Popup.scale(badges-motion.amount);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            owned: root.badges-owned; available: root.badges-available; note: root.badges-note;
+            first: root.badges-first;
+            close => { root.close-badges(); }
+        }
+    }
+    // Someone's badges, over the profile they were clicked on.
+    person-badges-motion := PopupMotion { open: root.person-badges-open; }
+    if person-badges-motion.shown: Rectangle {
+        background: rgba(0, 0, 0, 0.7 * person-badges-motion.amount);
+        TouchArea { clicked => { root.close-person-badges(); } }
+        FocusScope {
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape { root.close-person-badges(); return accept; }
+                return reject;
+            }
+        }
+        BadgesWindow {
+            opacity: Popup.opacity(person-badges-motion.amount); transform-scale: Popup.scale(person-badges-motion.amount);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            person: root.person-badges-name; person-avatar: root.person-badges-avatar;
+            owned: root.person-badges; first: root.person-badges-first;
+            note: root.person-badges-note; failed: root.person-badges-failed;
+            close => { root.close-person-badges(); }
+            retry => { root.retry-person-badges(); }
+            view-own(badge) => { root.view-own-badges(badge); }
+            // Discord's own page opens, and the windows make way as Discord's do.
+            open-link(link) => { root.close-person-badges(); root.close-profile(); root.open-link(link); }
         }
     }
     // A mutual server's card, over the profile that lists it. Clicking
@@ -3771,11 +4269,24 @@ export component YapfastWindow inherits Window {
     }
     profile-editor-motion := PopupMotion { open: root.profile-editor-open; }
     if profile-editor-motion.shown: ProfileEditorDialog {
+            open-link(url) => { root.open-link(url); }
         motion: profile-editor-motion.amount;
         prompt: root.profile-editor-prompt;
         name <=> root.profile-editor-name; pronouns <=> root.profile-editor-pronouns;
         bio <=> root.profile-editor-bio; colour <=> root.profile-editor-colour;
         write(field, text) => { root.write-profile(field, text); }
+        choose-name-style(font, effect, colours) => { root.choose-name-style(font, effect, colours); }
+        copy-id => { root.copy-text(root.account-id); }
+        open-wishlist => { root.open-profile-wishlist(); }
+        edit-note => { root.edit-own-note(); }
+        choose-tag(server) => { root.choose-server-tag(server); }
+        edit-status => { root.open-status(); }
+        has-status: root.has-custom-status; status-text: root.account-status; status-emoji: root.account-status-emoji;
+        parse-hex(text) => { return root.parse-hex(text); }
+        format-hex(colour) => { return root.format-hex(colour); }
+        key-part(key, index) => { return root.key-part(key, index); }
+        key-colour(key, index) => { return root.key-colour(key, index); }
+        presence: root.account-presence;
         pick(kind) => { root.pick-profile-picture(kind); }
         reset(kind) => { root.reset-profile-picture(kind); }
         unlock-nitro => { root.unlock-nitro(); }

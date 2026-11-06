@@ -350,7 +350,10 @@ The window follows Discord's arrangement:
   DMs show the person's avatar. Participants of the call you are in appear under
   its voice channel, with a green ring while they speak and a muted icon; for
   Discord, who is in every other voice channel shows too, with a LIVE tag for a
-  screen share and a camera icon. You, in a channel on another client such as
+  screen share and a camera icon. Each name is in its owner's display name
+  style, shortened with "…" to fit, then their server tag, as in the member
+  list: the font always, and in a DM call the colours and effect while the
+  row is hovered. You, in a channel on another client such as
   your phone, show dimmed until hovered, without icons, and the tooltip says
   "Connected on another client". Every row takes the hover tone, and clicking
   someone opens their profile card beside the row, as Discord's popout does;
@@ -414,6 +417,35 @@ The window follows Discord's arrangement:
   device menu; the input menu shows a local level meter. While you speak in
   a call, unmuted, the panel's avatar has the same green ring as your row in
   the call.
+- Side panels that fold, off unless turned on. With "Fold the channel
+  list" on in Appearance, the sidebar folds to a 34px sliver beside the rail
+  and unrolls over the conversation while the pointer is on it, staying while
+  the pointer goes back over the rail; with "Fold the member list" on, the
+  member list folds to its avatars at the right and unrolls leftward the
+  same way. Each waits before unrolling (Open delay, 120 ms unless changed) and before folding
+  again (Close delay, 300 ms), so passing over it doesn't flicker; a device
+  menu opened from the sidebar, or a profile card opened from the member
+  list, keeps its panel open. Folded, the sliver keeps each row's icon: an
+  unread channel's icon is bright, with the unread notch at the sliver's
+  edge, and mentions show their count on the icon's corner; DM pictures
+  shrink to 24px with their status dot to fit; up to three pictures of who's
+  in a voice channel stack under its icon, then "+N", with a red dot on each
+  face sharing their screen, and beside "+N" when someone further down is;
+  and the server's icon,
+  or the logo on the DM home, stands where the header was. The account panel
+  stands in the rail as a pill (settings, output, input, the account's
+  picture) unless turned off, when it folds with the list. Unrolled over the
+  conversation, a panel casts a soft shadow on it. A pin at the right of the
+  sidebar's header, and at the member list's top right, keeps that panel
+  unrolled until unpinned; Ctrl+Shift+B pins or unpins the channel list from
+  anywhere while it folds. Pins last until Yapfast quits. Appearance's
+  collapsible SIDE PANELS group holds all of these: the two folds, the two
+  delays (sliders in 50 ms steps), the shadow, unread and mentions, voice
+  channels, the server's icon, the account pill and the pins, kept in
+  `layout.json` (`fold_channels`, `fold_members`, `unroll_delay`,
+  `fold_delay`, `unrolled_shadow`, `folded_unread`, `folded_voice`,
+  `folded_server`, `folded_dock`, `pin_button`) and applied at once. With
+  Extra animations off, folding, unrolling and the pill's fade snap.
 - A conversation with a 48px header: the conversation's icon and name, and
   for a Discord server channel its topic on one line after a rule, which a
   click shows in full. Its buttons sit on the right, as in Discord: a DM's

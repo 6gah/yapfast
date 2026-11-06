@@ -282,6 +282,7 @@ fn prepare(window: &YapfastWindow) {
     window.set_emoji_font(emoji::family().into());
     copy_whole_messages(window);
     mark_autoscrolls(window);
+    type_anywhere(window);
 }
 
 /// The most backend events applied together before the window refreshes, so
@@ -293,8 +294,8 @@ const ZOOM_NOTE: Duration = Duration::from_millis(1200);
 
 /// Follows the native window's focus, for notifications, zooms the window
 /// with Ctrl and +, - and 0 or the scroll wheel, keeping the level in the
-/// layout, opens the quick switcher with Ctrl+K, and takes files dropped on
-/// it.
+/// layout, opens the quick switcher with Ctrl+K, pins the folding channel
+/// list open with Ctrl+Shift+B, and takes files dropped on it.
 fn watch_window(window: &YapfastWindow, adapter: &Rc<RefCell<Adapter>>) {
     use slint::winit_030::{
         EventResult,
@@ -303,14 +304,14 @@ fn watch_window(window: &YapfastWindow, adapter: &Rc<RefCell<Adapter>>) {
             keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
         },
     };
-    /// The K key: the letter K in the keyboard's layout, or in a layout
-    /// without Latin letters, the key in its place.
-    fn is_k(key: &KeyEvent) -> bool {
+    /// A letter key, such as K: the letter in the keyboard's layout, or in
+    /// a layout without Latin letters, the key in its place.
+    fn is_letter(key: &KeyEvent, letter: &str, code: KeyCode) -> bool {
         match &key.logical_key {
             Key::Character(text) if text.chars().all(|letter| letter.is_ascii_alphabetic()) => {
-                text.eq_ignore_ascii_case("k")
+                text.eq_ignore_ascii_case(letter)
             }
-            _ => key.physical_key == PhysicalKey::Code(KeyCode::KeyK),
+            _ => key.physical_key == PhysicalKey::Code(code),
         }
     }
     let saved = zoom::saved(adapter.borrow().layout.zoom);
@@ -509,7 +510,7 @@ fn watch_window(window: &YapfastWindow, adapter: &Rc<RefCell<Adapter>>) {
                 if let WindowEvent::KeyboardInput { event: key, .. } = event
                     && key.state == ElementState::Pressed
                     && keys.control_only()
-                    && is_k(key)
+                    && is_letter(key, "k", KeyCode::KeyK)
                     && let Some(window) = weak.upgrade()
                     && window.get_workspace()
                     && !window.get_settings_open()
@@ -524,6 +525,22 @@ fn watch_window(window: &YapfastWindow, adapter: &Rc<RefCell<Adapter>>) {
                                 adapter.borrow_mut().action(&window, Action::ToggleSwitcher);
                             }
                         });
+                    }
+                    return EventResult::PreventDefault;
+                }
+                // Ctrl+Shift+B pins the folding channel list open, or lets
+                // it fold again, as its pin does.
+                if let WindowEvent::KeyboardInput { event: key, .. } = event
+                    && key.state == ElementState::Pressed
+                    && keys.control_shift()
+                    && is_letter(key, "b", KeyCode::KeyB)
+                    && let Some(window) = weak.upgrade()
+                    && window.get_workspace()
+                    && !window.get_settings_open()
+                    && window.global::<Looks>().get_fold_channels()
+                {
+                    if !key.repeat {
+                        window.set_sidebar_pinned(!window.get_sidebar_pinned());
                     }
                     return EventResult::PreventDefault;
                 }
@@ -621,6 +638,16 @@ fn open_from_notification(room: String) {
         if let Some(open) = open.borrow().as_ref() {
             open(room);
         }
+    });
+}
+
+/// Sends what's typed with nothing focused, such as after a menu closes, to the composer.
+fn type_anywhere(window: &YapfastWindow) {
+    let window = window.as_weak();
+    i_slint_core::yapfast_typing::on_unclaimed(move |text| {
+        window
+            .upgrade()
+            .is_some_and(|window| window.invoke_type_into_composer(text.into()))
     });
 }
 
@@ -970,6 +997,34 @@ struct Layout {
     strip_tracking: Option<bool>,
     /// When animations play.
     animate: Animate,
+    /// Profile effects play over cards; on unless turned off.
+    profile_effects: Option<bool>,
+    /// The side panels fold until pointed at; off unless turned on.
+    fold_channels: Option<bool>,
+    fold_members: Option<bool>,
+    /// How long a folded panel waits under the pointer before it unrolls,
+    /// and after the pointer leaves before it folds, in ms; 120 and 300
+    /// unless changed.
+    unroll_delay: Option<i32>,
+    fold_delay: Option<i32>,
+    /// A shadow on the chat side of a panel unrolled over it, what the
+    /// folded channel list shows (unread channels and mentions, who's in
+    /// voice channels, the server's icon), the account panel as a pill in
+    /// the rail, and the pins that keep a panel unrolled; on unless turned
+    /// off.
+    unrolled_shadow: Option<bool>,
+    folded_unread: Option<bool>,
+    folded_voice: Option<bool>,
+    folded_server: Option<bool>,
+    folded_dock: Option<bool>,
+    pin_button: Option<bool>,
+    /// What people's rows, names and cards show; on unless turned off.
+    nameplates: Option<bool>,
+    name_styles: Option<bool>,
+    server_tags: Option<bool>,
+    avatar_frames: Option<bool>,
+    /// Rows ease and menus grow; on unless turned off.
+    animations: Option<bool>,
     /// Joining a call turns the microphone on; on unless turned off.
     unmute_on_join: Option<bool>,
     /// Joining a call deafens.
@@ -1047,6 +1102,11 @@ struct Layout {
 /// Yapfast's sounds start as they're made: 12 dB under full scale at the loudest.
 const DEFAULT_SOUND_VOLUME: u8 = 100;
 
+/// How long a folded side panel waits before it unrolls, and before it folds
+/// again, in ms, unless changed in Appearance.
+const UNROLL_DELAY: i32 = 120;
+const FOLD_DELAY: i32 = 300;
+
 /// The noise suppression settings' choices, in the order they show.
 const SUPPRESSORS: [yapfast_core::noise::Suppressor; 3] = [
     yapfast_core::noise::Suppressor::DeepFilterNet,
@@ -1103,6 +1163,9 @@ fn show_motion(window: &YapfastWindow) {
         Animate::Never => false,
     };
     window.global::<Motion>().set_playing(playing);
+    window
+        .global::<Motion>()
+        .set_effects(window.get_profile_effects());
 }
 
 /// Where a setting's value is among its choices.
@@ -1216,6 +1279,23 @@ impl Layout {
         window.set_strip_tracking(self.strip_tracking.unwrap_or(true));
         window.set_animate(choice(&ANIMATES, self.animate));
         ANIMATE.set(self.animate);
+        window.set_profile_effects(self.profile_effects.unwrap_or(true));
+        let looks = window.global::<Looks>();
+        looks.set_fold_channels(self.fold_channels.unwrap_or(false));
+        looks.set_fold_members(self.fold_members.unwrap_or(false));
+        looks.set_unroll_delay(self.unroll_delay.unwrap_or(UNROLL_DELAY).clamp(0, 1000));
+        looks.set_fold_delay(self.fold_delay.unwrap_or(FOLD_DELAY).clamp(0, 1500));
+        looks.set_unrolled_shadow(self.unrolled_shadow.unwrap_or(true));
+        looks.set_folded_unread(self.folded_unread.unwrap_or(true));
+        looks.set_folded_voice(self.folded_voice.unwrap_or(true));
+        looks.set_folded_server(self.folded_server.unwrap_or(true));
+        looks.set_folded_dock(self.folded_dock.unwrap_or(true));
+        looks.set_pin_button(self.pin_button.unwrap_or(true));
+        looks.set_nameplates(self.nameplates.unwrap_or(true));
+        looks.set_name_styles(self.name_styles.unwrap_or(true));
+        looks.set_server_tags(self.server_tags.unwrap_or(true));
+        looks.set_avatar_frames(self.avatar_frames.unwrap_or(true));
+        looks.set_animations(self.animations.unwrap_or(true));
         show_motion(window);
         window.set_unmute_on_join(self.unmute_on_join.unwrap_or(true));
         window.set_deafen_on_join(self.deafen_on_join);
@@ -2572,7 +2652,7 @@ fn same_list<T: Clone + PartialEq + 'static>(old: &ModelRc<T>, new: ModelRc<T>) 
 /// The width role chips fill in the profile card and the full profile: the
 /// cards' widths less their padding.
 const PROFILE_CARD_WIDTH: f32 = 300. - 2. * 16.;
-const PROFILE_LARGE_WIDTH: f32 = 600. - 2. * 24.;
+const PROFILE_LARGE_WIDTH: f32 = 400. - 2. * 32.;
 
 /// The most custom emoji the picker fetches pictures for at once.
 const MAX_PICKER_EMOJI: usize = 600;
