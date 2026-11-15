@@ -199,7 +199,9 @@ impl Application {
         // the plugin system, and applied here because the card is the surface
         // that shows a person today. A card opened before the answer comes is
         // drawn as Yapfast knows them and drawn again when it does.
+        #[cfg(feature = "plugins")]
         let mut profile = profile;
+        #[cfg(feature = "plugins")]
         self.plugins_identify(&room, &mut profile);
         self.state.profile = Some(ProfileView {
             profile,
