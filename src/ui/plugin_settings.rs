@@ -1006,7 +1006,7 @@ fn show(window: &YapfastWindow, page: &mut Page) {
     global.set_idle(nearest(&IDLE_MINUTES, advanced.idle_minutes));
     global.set_sandbox(
         if advanced.sandbox_unavailable {
-            "OS sandbox unavailable: plugins run in WebAssembly's sandbox alone."
+            "OS sandbox unavailable: this system can't give the plugin helper its extra walls, so plugins are kept apart by WebAssembly alone."
         } else {
             ""
         }

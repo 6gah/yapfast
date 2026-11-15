@@ -889,10 +889,20 @@ component ListingFace inherits Rectangle {
             Text { text: root.listing.byline; color: Theme.muted; font-size: 12px; overflow: elide; }
         }
         Middle {
+            // An installed listing leads to the plugin's own page, where its
+            // switch, settings and permissions are, rather than a dead button.
             ActionButton {
-                text: root.listing.installed ? "Installed" : "Install"; small: true; enabled: !root.listing.installed;
-                label: root.listing.installed ? root.listing.name + " is installed" : "Install " + root.listing.name;
-                clicked => { PluginPage.install(root.listing.id); }
+                text: root.listing.installed ? "Open" : "Install"; small: true;
+                ghost: root.listing.installed;
+                label: root.listing.installed ? "Open " + root.listing.name + ", which is installed" : "Install " + root.listing.name;
+                clicked => {
+                    if root.listing.installed {
+                        PluginPage.tab-chosen(1);
+                        PluginPage.open-plugin(root.listing.id);
+                    } else {
+                        PluginPage.install(root.listing.id);
+                    }
+                }
             }
         }
     }
