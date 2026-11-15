@@ -19,6 +19,27 @@ use yapfast_ui::{
 
 use super::*;
 
+/// The link a plugin's `open.url` put in the leaving dialog, which the dialog's
+/// Visit may hand to the system even when it isn't a web page: the bridge
+/// already checked its scheme against the plugin's manifest.
+static ASKED_OPEN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Shows a plugin's link in the leaving dialog, with the theme unmodified while
+/// it is open, rather than opening it for the plugin.
+pub(super) fn confirm_open(window: &YapfastWindow, url: String) {
+    window.set_leaving_site(yapfast_core::links::host(&url).into());
+    window.set_leaving_link(url.as_str().into());
+    *ASKED_OPEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+    theme::protect(window, true);
+}
+
+/// Whether `link`, chosen in the leaving dialog, is the one a plugin asked to
+/// open, forgetting it either way.
+pub(super) fn take_asked_open(link: &str) -> bool {
+    let mut asked = ASKED_OPEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    asked.take().is_some_and(|asked| asked == link)
+}
+
 /// The enabled plugins as the window uses them.
 pub(super) struct Plugins {
     pub(super) overrides: Option<Arc<UiOverrides>>,

@@ -2239,12 +2239,26 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
     let weak = window.as_weak();
     window.on_visit_leaving_link(move || {
         let Some(window) = weak.upgrade() else { return };
-        open_web_page(&window.get_leaving_link());
+        let link = window.get_leaving_link();
+        // A plugin's link of a scheme its manifest lists (`open.app`) is
+        // handed to the system once the person chose to; a web page opens as
+        // any other.
+        #[cfg(feature = "plugins")]
+        let plugin_link = super::plugins::take_asked_open(&link) && !links::openable(&link);
+        #[cfg(not(feature = "plugins"))]
+        let plugin_link = false;
+        if plugin_link {
+            super::browser::open(&link);
+        } else {
+            open_web_page(&link);
+        }
         window.set_leaving_link(SharedString::default());
         theme::protect(&window, false);
     });
     let weak = window.as_weak();
     window.on_close_leaving_link(move || {
+        #[cfg(feature = "plugins")]
+        super::plugins::take_asked_open("");
         if let Some(window) = weak.upgrade() {
             window.set_leaving_link(SharedString::default());
             theme::protect(&window, false);

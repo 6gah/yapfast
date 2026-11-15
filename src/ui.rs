@@ -2968,6 +2968,12 @@ impl Adapter {
                 Effect::CopyPicture(picture) => crate::copy::picture(picture),
                 #[cfg(feature = "plugins")]
                 Effect::CopyText(text) => crate::copy::text(text),
+                #[cfg(feature = "plugins")]
+                Effect::ConfirmOpen(url) => {
+                    if let Some(window) = self.window.upgrade() {
+                        plugins::confirm_open(&window, url);
+                    }
+                }
                 Effect::StopDiscordLink => {
                     #[cfg(feature = "discord")]
                     {
