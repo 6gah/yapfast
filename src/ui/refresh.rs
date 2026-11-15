@@ -90,6 +90,16 @@ impl Reach {
                 plugins: true,
                 ..Self::default()
             },
+            // What an installed plugin drew arrives the same way as a dev
+            // folder's, through the bridge, and touches the same slots: a
+            // decoration or a badge per visible row once redrew the window.
+            #[cfg(feature = "plugins")]
+            Event::Plugin(yapfast_core::application::plugins::News::Notice(
+                yapfast_core::plugins::state::Notice::Slot(_),
+            )) => Self {
+                plugins: true,
+                ..Self::default()
+            },
             _ => Self::EVERYTHING,
         }
     }
