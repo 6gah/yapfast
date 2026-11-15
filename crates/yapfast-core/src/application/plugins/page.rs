@@ -346,10 +346,9 @@ impl Application {
                             .network
                             .iter()
                             .filter(|host| {
-                                !installed
-                                    .grants
-                                    .iter()
-                                    .any(|grant| &grant.host == *host && (grant.declared || grant.allowed))
+                                !installed.grants.iter().any(|grant| {
+                                    &grant.host == *host && (grant.declared || grant.allowed)
+                                })
                             })
                             .cloned(),
                     );

@@ -29,7 +29,9 @@ static ASKED_OPEN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None
 pub(super) fn confirm_open(window: &YapfastWindow, url: String) {
     window.set_leaving_site(yapfast_core::links::host(&url).into());
     window.set_leaving_link(url.as_str().into());
-    *ASKED_OPEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+    *ASKED_OPEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
     protect_theme(window);
 }
 
@@ -48,7 +50,9 @@ pub(super) fn protect_theme(window: &YapfastWindow) {
 /// Whether `link`, chosen in the leaving dialog, is the one a plugin asked to
 /// open, forgetting it either way.
 pub(super) fn take_asked_open(link: &str) -> bool {
-    let mut asked = ASKED_OPEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut asked = ASKED_OPEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     asked.take().is_some_and(|asked| asked == link)
 }
 
@@ -1030,7 +1034,11 @@ mod tests {
             ..Default::default()
         });
         protect_theme(&window);
-        assert_eq!(theme::Theme::shown(&window), theme::YAP, "the review is protected");
+        assert_eq!(
+            theme::Theme::shown(&window),
+            theme::YAP,
+            "the review is protected"
+        );
         // Closing a leaving-link dialog meanwhile doesn't hand the colours back.
         window.set_leaving_link("https://example.com/".into());
         window.set_leaving_link(SharedString::default());

@@ -181,7 +181,8 @@ impl Shared {
 
     /// Keeps what the helper said about its sandbox in its `Ready`.
     pub(super) fn set_sandboxed(&self, sandboxed: bool) {
-        self.sandbox.store(if sandboxed { 1 } else { 2 }, Ordering::Relaxed);
+        self.sandbox
+            .store(if sandboxed { 1 } else { 2 }, Ordering::Relaxed);
     }
 
     /// Keeps the helper's process id, or forgets it when the process is gone.
