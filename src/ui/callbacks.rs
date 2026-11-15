@@ -2253,7 +2253,8 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
             open_web_page(&link);
         }
         window.set_leaving_link(SharedString::default());
-        theme::protect(&window, false);
+        #[cfg(feature = "plugins")]
+        super::plugins::protect_theme(&window);
     });
     let weak = window.as_weak();
     window.on_close_leaving_link(move || {
@@ -2261,7 +2262,8 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
         super::plugins::take_asked_open("");
         if let Some(window) = weak.upgrade() {
             window.set_leaving_link(SharedString::default());
-            theme::protect(&window, false);
+            #[cfg(feature = "plugins")]
+            super::plugins::protect_theme(&window);
         }
     });
     let state = adapter.clone();

@@ -30,7 +30,19 @@ pub(super) fn confirm_open(window: &YapfastWindow, url: String) {
     window.set_leaving_site(yapfast_core::links::host(&url).into());
     window.set_leaving_link(url.as_str().into());
     *ASKED_OPEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
-    theme::protect(window, true);
+    protect_theme(window);
+}
+
+/// Draws the window in Yapfast's own colours while any dialog that decides
+/// what a plugin may do or reach is open: a site question, the leaving-link
+/// dialog, or the review of a plugin about to be installed (PLAN.md 11.7). Each
+/// of them asks this rather than setting the theme for itself, so closing one
+/// doesn't hand the others' colours back to a plugin.
+pub(super) fn protect_theme(window: &YapfastWindow) {
+    let open = !window.get_consent_plugin().is_empty()
+        || !window.get_leaving_link().is_empty()
+        || window.global::<PluginPage>().get_review().shown;
+    theme::protect(window, open);
 }
 
 /// Whether `link`, chosen in the leaving dialog, is the one a plugin asked to
@@ -487,7 +499,6 @@ impl Adapter {
         let Some(window) = self.window.upgrade() else {
             return;
         };
-        let open = ask.is_some();
         match ask {
             Some(ask) => {
                 window.set_consent_plugin(ask.name.into());
@@ -501,7 +512,7 @@ impl Adapter {
         // A question about what a plugin may reach is drawn in Yapfast's own
         // colours: a plugin can't restyle the dialog that decides what it
         // reaches. Another dialog that asks for them may still be open.
-        theme::protect(&window, open || !window.get_leaving_link().is_empty());
+        protect_theme(&window);
     }
 }
 
@@ -1003,5 +1014,32 @@ mod tests {
         theme::set_overlay(Vec::new());
         theme::YAP.apply(&window);
         assert_eq!(theme::Theme::shown(&window), theme::YAP);
+    }
+
+    #[test]
+    fn the_install_review_is_drawn_in_yapfasts_own_colours() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = YapfastWindow::new().unwrap();
+        let blue = slint::Color::from_rgb_u8(0x7a, 0xa2, 0xff);
+        theme::set_overlay(vec![("accent", 0xff7a_a2ff)]);
+        theme::YAP.apply(&window);
+        assert_eq!(theme::Theme::shown(&window).accent, blue);
+        let page = window.global::<PluginPage>();
+        page.set_review(PluginReview {
+            shown: true,
+            ..Default::default()
+        });
+        protect_theme(&window);
+        assert_eq!(theme::Theme::shown(&window), theme::YAP, "the review is protected");
+        // Closing a leaving-link dialog meanwhile doesn't hand the colours back.
+        window.set_leaving_link("https://example.com/".into());
+        window.set_leaving_link(SharedString::default());
+        protect_theme(&window);
+        assert_eq!(theme::Theme::shown(&window), theme::YAP);
+        page.set_review(PluginReview::default());
+        protect_theme(&window);
+        assert_eq!(theme::Theme::shown(&window).accent, blue);
+        theme::set_overlay(Vec::new());
+        theme::YAP.apply(&window);
     }
 }

@@ -989,6 +989,9 @@ fn show(window: &YapfastWindow, page: &mut Page) {
         Find::Review(found) => review(found),
         _ => PluginReview::default(),
     });
+    // The review is a consent dialog too: an installed plugin's colours
+    // don't get to restyle the question of what the next one may reach.
+    super::plugins::protect_theme(window);
 
     let advanced = &view.advanced;
     global.set_budget(nearest(&MEMORY_BUDGETS, advanced.memory_budget));
