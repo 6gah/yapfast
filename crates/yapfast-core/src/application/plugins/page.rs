@@ -331,14 +331,33 @@ impl Application {
                     .find(|installed| installed.id == id);
                 if let Some(installed) = &installed {
                     review.replaces = Some(installed.version.clone());
-                    let adds: Vec<String> = review
+                    let mut adds: Vec<String> = review
                         .capabilities
                         .iter()
                         .filter(|capability| !installed.capabilities.contains(capability))
                         .cloned()
                         .collect();
-                    // An update that asks for no capability the person hasn't
-                    // already given is one click (`docs/plugins/host.md`); one that
+                    // A host is reach as much as a capability is: a new one in
+                    // the manifest would be granted by the one click, and with
+                    // `messages.read` it is where messages could go. So is more
+                    // memory than the person agreed to.
+                    adds.extend(
+                        review
+                            .network
+                            .iter()
+                            .filter(|host| {
+                                !installed
+                                    .grants
+                                    .iter()
+                                    .any(|grant| &grant.host == *host && (grant.declared || grant.allowed))
+                            })
+                            .cloned(),
+                    );
+                    if review.memory_pages > installed.memory_pages {
+                        adds.push(format!("{} memory pages", review.memory_pages));
+                    }
+                    // An update that asks for nothing the person hasn't already
+                    // given is one click (`docs/plugins/host.md`); one that
                     // does shows its review first.
                     if ask.is_update() && adds.is_empty() {
                         self.plugin_page.fetched = Some(fetched);
