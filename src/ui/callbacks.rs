@@ -1220,7 +1220,11 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                     const MARGIN: i32 = 8;
                     let roster = window.get_roster();
                     let count = roster.row_count() as i32;
-                    if count == 0 {
+                    // A range kept from a longer list, such as a server's
+                    // before a small DM opened, can start past this one's
+                    // end, and `clamp` panics when its floor is above its
+                    // ceiling.
+                    if count == 0 || top >= count {
                         return;
                     }
                     let first = (top - MARGIN).max(0) as usize;
