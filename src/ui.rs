@@ -3157,12 +3157,15 @@ impl Adapter {
                 ChannelInput::Name(_) | ChannelInput::Topic(_) | ChannelInput::FindMembers(_)
             )
         );
-        // Pictures asked for change nothing on screen until they come.
+        // Pictures asked for change nothing on screen until they come, and
+        // neither does the member list saying which rows are in view: it asks
+        // plugins for badges, which arrive as slots of their own.
         let quiet = matches!(
             action,
             Action::LoadPicturesFirst(_)
                 | Action::KeepEmojiPictures(_)
                 | Action::CacheEmojiPictures
+                | Action::VisibleMembers { .. }
         );
         let effects = self.app.dispatch(action);
         self.execute(effects);
