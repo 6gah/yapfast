@@ -845,10 +845,18 @@ fn review(review: &Review) -> PluginReview {
             .unwrap_or_default()
             .into(),
         reviewed: review.reviewed,
-        lines: lines(&page::permission_lines(
-            &review.capabilities,
-            &review.network,
-        )),
+        lines: lines(&{
+            let mut shown = page::permission_lines(&review.capabilities, &review.network);
+            // PLAN.md 10.3: blocking on failure "appears in the dialog".
+            if review.blocks {
+                shown.push(Line {
+                    text: page::HOLDS_MESSAGES.to_owned(),
+                    tone: Tone::Strong,
+                    permission: None,
+                });
+            }
+            shown
+        }),
         memory: line(
             &Line {
                 text: memory,
