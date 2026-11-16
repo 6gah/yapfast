@@ -402,6 +402,17 @@ impl Adapter {
         }
         self.plugins = plugins;
         show(window, self.plugins.as_deref());
+        // The member list's rows report where they are only for a plugin that
+        // badges people.
+        let badges = self
+            .app
+            .state
+            .plugins
+            .as_ref()
+            .is_some_and(|plugins| plugins.decorates_members());
+        window
+            .global::<PluginSurfaces>()
+            .set_members_reported(badges);
         // The colours plugins set are laid over the theme when it is applied, so
         // it is applied again with the new ones.
         if theme::reapply(window) {

@@ -4,7 +4,7 @@ import { Theme, Middle, Label, Tip, BadgeTip } from "theme.slint";
 import { ActionButton, IconButton, Avatar, Skeleton, Nameplate, StatusText, StyledName, NameStyleRow, EffectLayer, ProfileEffect, PictureStore, Picture, Motion, TextField, ServerTagChip, TipIcon, ActivityClock } from "controls.slint";
 import { StatusDot } from "rail.slint";
 import { BotTag } from "messages.slint";
-import { PluginBadge, PluginBadgeView, PluginPart, PluginWidgets } from "plugins.slint";
+import { PluginBadge, PluginBadgeView, PluginPart, PluginSurfaces, PluginWidgets } from "plugins.slint";
 
 /// A member of the open room, or the heading, with no id, that starts a group.
 export struct MemberRow {
@@ -129,6 +129,9 @@ export component MemberPanel inherits Rectangle {
     property <int> view-tick: 0;
     changed top-index => { root.viewport(root.top-index, root.bottom-index); }
     changed bottom-index => { root.viewport(root.top-index, root.bottom-index); }
+    // A plugin that badges people was turned on: the rows in sight report now.
+    property <bool> reported: PluginSurfaces.members-reported;
+    changed reported => { if self.reported { root.view-tick += 1; } }
     // Discord's member list sits on the conversation's ground, a faint line on its left.
     background: ClientStyle.enabled ? Theme.chat : Theme.sidebar;
     accessible-role: list;
@@ -252,13 +255,16 @@ export component MemberPanel inherits Rectangle {
         member-list := ListView {
             vertical-stretch: 1;
             for member[index] in root.rows: VerticalLayout {
-                property <length> view-y: self.y + member-list.content-y;
+                // Only while a plugin badges people: otherwise `view-y` doesn't
+                // follow the scroll, so no row's handler runs as the list moves.
+                property <length> view-y: PluginSurfaces.members-reported ? self.y + member-list.content-y : 0px;
                 property <int> view-tick: root.view-tick;
                 function report-view() {
+                    if !PluginSurfaces.members-reported { return; }
                     if self.view-y <= 0px && self.view-y + self.height > 0px { root.top-index = index; }
                     if self.view-y < member-list.height && (self.view-y + self.height >= member-list.height || index == root.rows.length - 1) { root.bottom-index = index; }
                 }
-                init => { root.view-tick += 1; }
+                init => { if PluginSurfaces.members-reported { root.view-tick += 1; } }
                 changed view-y => { self.report-view(); }
                 changed height => { self.report-view(); }
                 changed view-tick => { self.report-view(); }

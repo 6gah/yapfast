@@ -320,7 +320,9 @@ beside a name in a list it already shows.
 ```
 
 The parent asks with `yf_member_decorate` for the rows the list is showing as it
-scrolls, one person at a time, and what comes back is a few characters and a
+scrolls, one person at a time; the list's rows report where they are only while
+an enabled plugin badges people, so without one a scroll runs no handler per
+row, and what comes back is a few characters and a
 tone — a mark rather than a tree. [`plugins/slots.rs`](../../crates/yapfast-plugins/src/slots.rs)
 keeps them under `BADGES`: at most 640 people, 3 badges a person and 16
 characters a badge, so a name stays a name. `ui/people.slint` draws a member

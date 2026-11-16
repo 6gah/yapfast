@@ -60,6 +60,10 @@ export global PluginSurfaces {
     in-out property <[PluginButton]> rail-items;
     /// Buttons from `header_buttons`, in the conversation's header.
     in-out property <[PluginButton]> header-buttons;
+    /// Whether an enabled plugin badges people in the member list, which is
+    /// the only reason the list's rows report where they are as it scrolls:
+    /// without one, a scroll runs no handler per row.
+    in-out property <bool> members-reported: false;
     /// A static row from a manifest: the plugin, and its action.
     callback row-acted(string, string);
 }
