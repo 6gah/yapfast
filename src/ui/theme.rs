@@ -882,6 +882,14 @@ pub fn set_overlay(colours: Vec<(&'static str, u32)>) {
     overlay::set(colours);
 }
 
+/// Applies the theme last chosen again, with the plugins' colours as they are
+/// now: what a plugin turned on or off while the window is open changes.
+/// Returns whether colours that rows carry in their markup changed.
+#[cfg(feature = "plugins")]
+pub fn reapply(window: &YapfastWindow) -> bool {
+    overlay::last_chosen().is_some_and(|theme| theme.apply(window))
+}
+
 /// Shows the chosen theme without plugins' colours while a dialog no plugin
 /// may restyle is open, such as the question before leaving for a link, and
 /// with them again once it closes.

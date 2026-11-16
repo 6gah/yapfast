@@ -74,15 +74,32 @@ pub(super) struct Plugins {
 impl Plugins {
     /// The plugins in the folder `YAPFAST_PLUGINS_DIR` names, with their
     /// colours laid over the theme; `None` without any, or with
-    /// `--no-plugins`.
+    /// `--no-plugins`. The store's plugins join them once the plugin system
+    /// has opened; see [`Adapter::rebuild_plugins`].
     pub(super) fn load() -> Option<Box<Self>> {
-        let found = plugins::load_from_environment();
-        if found.is_empty() {
+        Self::build(plugins::load_from_environment(), Vec::new())
+    }
+
+    /// The plugins of a development folder and the enabled plugins of the
+    /// store together, the folder's first: the first plugin keeps a change two
+    /// make, and a plugin in both is the folder's.
+    pub(super) fn build(
+        found: Vec<plugins::Found>,
+        mut store: Vec<plugins::Manifest>,
+    ) -> Option<Box<Self>> {
+        store.retain(|manifest| !found.iter().any(|found| found.manifest.id == manifest.id));
+        if found.is_empty() && store.is_empty() {
+            theme::set_overlay(Vec::new());
             return None;
         }
-        let checked: Vec<Checked> = found
+        let manifests: Vec<&plugins::Manifest> = found
             .iter()
-            .map(|found| plugins::ui::check(&found.manifest))
+            .map(|found| &found.manifest)
+            .chain(store.iter())
+            .collect();
+        let checked: Vec<Checked> = manifests
+            .iter()
+            .map(|manifest| plugins::ui::check(manifest))
             .collect();
         for plugin in &checked {
             for refusal in &plugin.refused {
@@ -95,11 +112,9 @@ impl Plugins {
         for conflict in conflicts {
             tracing::warn!(kept = %conflict.kept, lost = %conflict.lost, key = ?conflict.key, "two plugins change the same thing");
         }
-        let tweaks: Vec<_> = found
+        let tweaks: Vec<_> = manifests
             .iter()
-            .map(|found| {
-                yapfast_core::tweaks::check::<yapfast_core::tweaks::Tweaks>(&found.manifest)
-            })
+            .map(|manifest| yapfast_core::tweaks::check::<yapfast_core::tweaks::Tweaks>(manifest))
             .collect();
         for plugin in &tweaks {
             for (point, why) in &plugin.refused {
@@ -119,14 +134,14 @@ impl Plugins {
         });
         theme::set_overlay(colours);
         tracing::info!(plugins = checked.len(), "loaded plugins");
-        let previews = found.iter().flat_map(plugins::preview).collect();
-        let names = found
-            .into_iter()
-            .map(|found| PluginName {
-                id: found.manifest.id,
-                name: found.manifest.name,
+        let names = manifests
+            .iter()
+            .map(|manifest| PluginName {
+                id: manifest.id.clone(),
+                name: manifest.name.clone(),
             })
             .collect();
+        let previews = found.iter().flat_map(plugins::preview).collect();
         Some(Box::new(Self {
             overrides,
             tweaks,
@@ -370,6 +385,32 @@ pub(super) fn show(window: &YapfastWindow, plugins: Option<&Plugins>) {
 }
 
 impl Adapter {
+    /// Builds the plugins' changes to the window again, from the development
+    /// folder and the store's enabled plugins: what turning a plugin on or off,
+    /// installing, updating or removing one does while the window is open.
+    ///
+    /// The slots keep what the plugins still enabled drew, since a tree is held
+    /// by its plugin's place and the places only grow; a plugin turned off has
+    /// already had its trees taken away.
+    pub(super) fn rebuild_plugins(&mut self, window: &YapfastWindow) {
+        let store = self.app.plugin_interfaces();
+        let mut plugins = Plugins::build(plugins::load_from_environment(), store);
+        if let Some(plugins) = &mut plugins {
+            self.app.add_plugin_names(plugins.names.clone());
+            // A folder's previews were shown once, at start.
+            plugins.previews.clear();
+        }
+        self.plugins = plugins;
+        show(window, self.plugins.as_deref());
+        // The colours plugins set are laid over the theme when it is applied, so
+        // it is applied again with the new ones.
+        if theme::reapply(window) {
+            self.refresh(window);
+        } else {
+            self.show_plugin_slots(window);
+        }
+    }
+
     /// Shows each slot whose trees changed since the window last showed
     /// it, and nothing else.
     pub(super) fn show_plugin_slots(&mut self, window: &YapfastWindow) {

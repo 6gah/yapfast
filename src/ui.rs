@@ -2898,6 +2898,15 @@ impl Adapter {
                         self.show_plugin_slots(&window);
                     }
                 }
+                // The enabled plugins changed: their colours, parts and names
+                // are built again from the store, and the page, if open, shows
+                // the change too.
+                #[cfg(feature = "plugins")]
+                Effect::Plugin(yapfast_core::application::plugins::Effect::Interface) => {
+                    if let Some(window) = self.window.upgrade() {
+                        self.rebuild_plugins(&window);
+                    }
+                }
                 // How the person on the profile card looks changed, so the card
                 // is drawn again; nothing else on screen moved.
                 #[cfg(feature = "plugins")]
