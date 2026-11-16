@@ -377,12 +377,15 @@ impl Adapter {
         else {
             return;
         };
-        // Only the rows of messages whose decorations changed.
+        // Only the rows of messages whose decorations changed. A plugin's
+        // answer names the message by its timeline item, which is what it was
+        // asked about; a row's `id` differs from it for messages sent this
+        // session, whose rows keep their local key.
         let decorated = slots.take_decorated();
         if !decorated.is_empty() {
             for (index, row) in self.rows.iter_mut().enumerate() {
-                if decorated.iter().any(|id| *id == row.id.as_str()) {
-                    row.plugin = decorations(slots, &row.id);
+                if decorated.iter().any(|item| *item == row.item.as_str()) {
+                    row.plugin = decorations(slots, &row.item);
                     self.models.messages.set_row_data(index, row.clone());
                 }
             }

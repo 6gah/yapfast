@@ -317,18 +317,20 @@ impl Application {
         }
         // The timeline is the open room's, which is the room these rows are in:
         // `Action::VisibleMessages` only reports the selected conversation.
-        let timeline = &self.state.messages;
-        let rows: Vec<yapfast_plugin_api::message::DecorateRequest> = items
+        // One pass over the timeline, which holds every loaded message, rather
+        // than one search of it per row on screen: this runs as the view moves.
+        let wanted: std::collections::HashSet<&str> = items.iter().map(String::as_str).collect();
+        let rows: Vec<yapfast_plugin_api::message::DecorateRequest> = self
+            .state
+            .messages
             .iter()
-            .filter_map(|item| {
-                let message = timeline.iter().find(|message| &message.item == item)?;
-                Some(yapfast_plugin_api::message::DecorateRequest {
-                    room: room.to_owned(),
-                    message: message.item.clone(),
-                    author: message.author.clone(),
-                    body: message.body.clone(),
-                    own: message.own,
-                })
+            .filter(|message| wanted.contains(message.item.as_str()))
+            .map(|message| yapfast_plugin_api::message::DecorateRequest {
+                room: room.to_owned(),
+                message: message.item.clone(),
+                author: message.author.clone(),
+                body: message.body.clone(),
+                own: message.own,
             })
             .collect();
         if rows.is_empty() {

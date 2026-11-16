@@ -4289,7 +4289,7 @@ impl Adapter {
         Some(
             messages
                 .iter()
-                .filter(|message| !slots.hidden(&message.id).row)
+                .filter(|message| !slots.hidden(&message.item).row)
                 .cloned()
                 .collect(),
         )
@@ -4453,10 +4453,10 @@ impl Adapter {
                     if let Some(slots) = &state.plugin_slots {
                         // A row whose pictures and files a plugin hid keeps its
                         // text and none of its media; see `messages::hide_media`.
-                        if slots.hidden(&message.id).media {
+                        if slots.hidden(&message.item).media {
                             hide_media(&mut row);
                         }
-                        row.plugin = super::plugins::decorations(slots, &message.id);
+                        row.plugin = super::plugins::decorations(slots, &message.item);
                     }
                     row
                 },
