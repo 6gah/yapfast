@@ -594,7 +594,8 @@ pub fn capability(name: &str) -> (String, Tone) {
 /// its capabilities, the hosts it connects to, and the sentence for a risky
 /// combination.
 /// The review's line for a plugin whose manifest says `on_failure: "block"`.
-pub const HOLDS_MESSAGES: &str = "Holds a message back when it can't check it: if it fails or runs late, the message isn't sent";
+pub const HOLDS_MESSAGES: &str =
+    "Holds a message back when it can't check it: if it fails or runs late, the message isn't sent";
 
 pub fn permission_lines(capabilities: &[String], hosts: &[String]) -> Vec<Line> {
     let mut lines = capability_lines(capabilities);
