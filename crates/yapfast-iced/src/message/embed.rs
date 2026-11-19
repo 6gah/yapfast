@@ -10,10 +10,10 @@ use yapfast_core::chat::{self, ChatMessage, Placement};
 use crate::{
     app::Message,
     controls,
-    fonts::{MEDIUM, SEMIBOLD},
+    fonts::{MEDIUM, REGULAR, SEMIBOLD},
     markdown::Look,
     media::{self, Fit, Gallery, Shot},
-    style::{hex, rounded},
+    style::hex,
     timeline::EmbedText,
 };
 
@@ -66,18 +66,25 @@ pub(super) fn embed<'a>(
             .min(EMBED_PARTS - 16);
     let mut card = column![].spacing(8).width(Length::Fill);
     if !embed.provider.is_empty() {
-        card = card.push(text(embed.provider.as_str()).size(12).color(theme.muted));
+        card = card.push(
+            text(embed.provider.as_str())
+                .size(theme.type_size("small", 12.0))
+                .font(theme.font("small", crate::fonts::REGULAR))
+                .color(theme.muted),
+        );
     }
     if !embed.author.is_empty() {
         card = card.push(
             text(embed.author.as_str())
-                .size(14)
-                .font(MEDIUM)
+                .size(theme.type_size("names", 14.0))
+                .font(theme.font("names", MEDIUM))
                 .color(theme.text),
         );
     }
     if !embed.title.is_empty() {
-        let title = text(embed.title.as_str()).size(16).font(SEMIBOLD);
+        let title = text(theme.heading(&embed.title).into_owned())
+            .size(theme.type_size("headings", 16.0))
+            .font(theme.font("headings", SEMIBOLD));
         card = card.push(if embed.url.is_empty() {
             Element::from(title.color(theme.text))
         } else {
@@ -146,7 +153,12 @@ pub(super) fn embed<'a>(
         ));
     }
     if !embed.footer.is_empty() {
-        card = card.push(text(embed.footer.as_str()).size(12).color(theme.muted));
+        card = card.push(
+            text(embed.footer.as_str())
+                .size(theme.type_size("small", 12.0))
+                .font(theme.font("small", REGULAR))
+                .color(theme.muted),
+        );
     }
     let mut beside = row![card].spacing(16);
     if let Some(at) = thumbnail {
@@ -165,7 +177,20 @@ pub(super) fn embed<'a>(
         ));
     }
     let bar_ink = embed.color.map_or(theme.edge, hex);
-    let ground = theme.sidebar;
+    let surface = yapfast_core::themes::package::art::ArtSurface::Embed;
+    let decorated =
+        ctx.themes.decorates(&theme.id, surface) || theme.package_paint("embed").is_some();
+    let ground = if decorated {
+        Color::TRANSPARENT
+    } else {
+        theme.sidebar
+    };
+    let mut border = theme.surface_border("embed", 4.0, 0.0, Color::TRANSPARENT);
+    let outline_fallback = border;
+    if theme.outline("embed").is_some() {
+        border.width = 0.0;
+    }
+    let shadow = theme.surface_shadow("embed", iced::Shadow::default());
     let shown = row![
         controls::bar(bar_ink, EMBED_BAR, Length::Fill),
         container(beside).padding(Padding {
@@ -176,12 +201,26 @@ pub(super) fn embed<'a>(
         })
     ]
     .height(Length::Shrink);
-    container(
+    let shown = container(
         container(shown)
             .max_width(EMBED_WIDTH)
             .clip(true)
-            .style(move |_| rounded(ground, 4)),
+            .style(move |_| iced::widget::container::Style {
+                background: Some(ground.into()),
+                border,
+                shadow,
+                ..Default::default()
+            }),
     )
-    .padding(Padding::ZERO.top(4))
-    .into()
+    .padding(Padding::ZERO.top(4));
+    let shown = crate::theme_art::surface(shown, ctx, surface);
+    crate::theme_art::outlined(
+        shown,
+        ctx,
+        yapfast_core::themes::layout::BorderPlace::Embed,
+        "embed",
+        4.0,
+        outline_fallback.width,
+        outline_fallback.color,
+    )
 }

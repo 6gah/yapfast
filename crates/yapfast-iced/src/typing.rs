@@ -204,6 +204,14 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Option<Element<'a, Message>> {
         return None;
     }
     let theme = ctx.look.theme;
+    let (names, count) = yapfast_core::themes::chrome::split_typing(&line);
+    let count = count.to_string();
+    let line = ctx.themes.label(
+        &theme.id,
+        yapfast_core::themes::chrome::Label::Typing,
+        line,
+        &[("name", names.as_str()), ("n", count.as_str())],
+    );
     let chat = theme.chat;
     let words = container(
         text(line)

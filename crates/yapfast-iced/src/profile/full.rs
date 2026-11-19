@@ -89,7 +89,13 @@ pub(super) fn full_view<'a>(
     .width(side_width)
     .height(Length::Fill)
     .clip(true)
-    .style(super::frame_style(inks, ctx.look.theme.edge, 12.0, true));
+    .style(super::frame_style(
+        inks,
+        ctx.look.theme,
+        ctx.look.theme.edge,
+        12.0,
+        true,
+    ));
     let side = mouse_area(crate::profile::cosmetic::dressed(
         ctx,
         shown,
@@ -161,7 +167,7 @@ pub(super) fn full_view<'a>(
     container(row![side, right].spacing(8).padding(8))
         .width(width)
         .height(height)
-        .style(super::frame_style(inks, edge, 8.0, true))
+        .style(super::frame_style(inks, ctx.look.theme, edge, 8.0, true))
         .into()
 }
 

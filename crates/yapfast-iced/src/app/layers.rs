@@ -187,6 +187,11 @@ impl Layer {
         )
     }
 
+    /// Whether opening and closing this layer uses a theme's popup cue.
+    pub(super) fn cued_popup(self) -> bool {
+        self.moves()
+    }
+
     /// Whether it takes every key no field took while it's open; the
     /// others take only Escape, the rest of the keys going on to the
     /// timeline and the composer.
@@ -303,6 +308,7 @@ impl App {
     /// drawn going starts closing, and the rest forget theirs. Nothing
     /// changes while the same popups stay open and the same go.
     pub(super) fn follow_popups(&mut self) {
+        let popup_motion = self.theme.motion();
         let mut open = 0u64;
         for (at, layer) in LAYERS.iter().enumerate() {
             if layer.moves() && self.is_open(*layer) {
@@ -343,8 +349,8 @@ impl App {
             // One opened again as it closes grows on from there.
             let start = match opening.moving.iter().position(|each| each.bit == bit) {
                 Some(at) => match opening.moving.remove(at).start.get() {
-                    Some(closing) => Some(motion::reopened(closing, now)),
-                    None => now.checked_sub(motion::DURATION),
+                    Some(closing) => Some(motion::reopened(popup_motion, closing, now)),
+                    None => now.checked_sub(popup_motion.duration(false)),
                 },
                 None => None,
             };
@@ -410,11 +416,12 @@ impl App {
         layer: iced::Element<'a, Message>,
     ) -> iced::Element<'a, Message> {
         let bit = popup.bit();
+        let style = self.theme.motion();
         match self.opening.moving.iter().find(|each| each.bit == bit) {
             Some(moving) if moving.closing => {
-                motion::leave(layer, &moving.start, Message::PopupGone(popup))
+                motion::leave(layer, &moving.start, Message::PopupGone(popup), style)
             }
-            Some(moving) => motion::motion(layer, &moving.start),
+            Some(moving) => motion::motion(layer, &moving.start, style),
             None => layer,
         }
     }
@@ -440,6 +447,19 @@ impl App {
             keyboard::Key::Named(named) => Some(*named),
             _ => None,
         };
+        // The owner's emergency way back from a theme that made the window
+        // difficult to use. This runs before any overlay takes keys, and
+        // `Message::Pressed` has already mapped the physical T to Latin for
+        // keyboard layouts without Latin letters.
+        if modifiers.control()
+            && modifiers.shift()
+            && !modifiers.alt()
+            && key.as_ref() == keyboard::Key::Character("t")
+        {
+            self.themes.turn_off(self.client.root());
+            self.show_theme(self.themes.shown());
+            return Task::none();
+        }
         let taker = self.layers().find(|layer| layer.takes_keys());
         if let Some(layer) = taker {
             return self.layer_key(layer, named, modifiers);

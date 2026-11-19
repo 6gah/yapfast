@@ -121,6 +121,11 @@ pub trait Hooks<M> {
     /// node is its own.
     const NESTS: bool = false;
 
+    /// Reconciles values held by the hook with its state when a view is
+    /// rebuilt. Most wrappers are stateless across rebuilds; animated ones
+    /// can use this to begin a transition from a changed input before draw.
+    fn diff(&self, _state: &mut Self::State) {}
+
     fn size(&self, child: Size<Length>) -> Size<Length> {
         child
     }
@@ -301,6 +306,7 @@ impl<H: Hooks<M>, M> Widget<M, Theme, Renderer> for Wrap<'_, H, M> {
     }
 
     fn diff(&self, tree: &mut Tree) {
+        self.hooks.diff(tree.state.downcast_mut());
         tree.diff_children(std::slice::from_ref(&self.child));
     }
 

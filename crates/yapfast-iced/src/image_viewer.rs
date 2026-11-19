@@ -310,7 +310,12 @@ impl<'a> View<'a> {
                 .align_y(Alignment::End),
             );
         }
-        Some(shown.view(self.cx.look))
+        let shown = shown.view(self.cx.look);
+        Some(crate::theme_art::surface(
+            shown,
+            self.cx,
+            yapfast_core::themes::package::art::ArtSurface::Lightbox,
+        ))
     }
 
     /// The round buttons either side that step to the previous and next

@@ -118,17 +118,32 @@ pub fn dialog<'a, M: Clone + 'a>(
     width: f32,
     on_outside: M,
 ) -> Element<'a, M> {
-    let (ground, edge) = (theme.raised, theme.edge);
-    let card = opaque(
-        container(body)
-            .width(width)
-            .style(move |_| container::Style {
-                background: Some(ground.into()),
-                border: crate::style::edge(edge, 12.0),
-                shadow: card_shadow(),
-                ..Default::default()
-            }),
-    );
+    let (mut ground, edge) = (theme.raised, theme.edge);
+    if theme.decorated("dialog") || theme.package_paint("raised").is_some() {
+        ground = iced::Color::TRANSPARENT;
+    }
+    let mut border = theme.surface_border("dialog", 12.0, 1.0, edge);
+    let drawn_width = border.width;
+    if theme.outline("dialog").is_some() {
+        border.width = 0.0;
+    }
+    let shadow = theme.surface_shadow("dialog", card_shadow());
+    let card = container(body)
+        .width(width)
+        .style(move |_| container::Style {
+            background: Some(ground.into()),
+            border,
+            shadow,
+            ..Default::default()
+        });
+    let card = opaque(crate::controls::themed_outline(
+        card,
+        theme,
+        "dialog",
+        edge,
+        drawn_width,
+        12.0,
+    ));
     // Kept inside the window, by its padding, both ways.
     opaque(stack![
         outside(on_outside, true),
@@ -159,13 +174,26 @@ pub fn panel<'a, M: Clone + 'a>(
     height: Option<f32>,
     on_outside: M,
 ) -> Element<'a, M> {
-    let ground = theme.chat;
+    let ground = if theme.decorated("dialog") || theme.package_paint("raised").is_some() {
+        iced::Color::TRANSPARENT
+    } else {
+        theme.chat
+    };
+    let mut border = theme.surface_border("dialog", 8.0, 0.0, iced::Color::TRANSPARENT);
+    let drawn_width = border.width;
+    if theme.outline("dialog").is_some() {
+        border.width = 0.0;
+    }
     let mut card = container(body)
         .width(width)
-        .style(move |_| crate::style::rounded(ground, 8));
+        .style(move |_| container::Style {
+            border,
+            ..crate::style::rounded(ground, border.radius)
+        });
     if let Some(height) = height {
         card = card.height(height);
     }
+    let card = crate::controls::themed_outline(card, theme, "dialog", theme.edge, drawn_width, 8.0);
     opaque(stack![
         crate::controls::dimmed(on_outside, PANEL_DIM),
         container(crate::widgets::motion::grow(opaque(card))).center(Length::Fill)

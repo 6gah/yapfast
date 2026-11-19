@@ -17,6 +17,154 @@ use super::{
 };
 use crate::{app::Message, composer::COMPOSER};
 
+/// A preview using an installed package whose resolved layout is exercised
+/// by the real virtual timeline, rather than only inspecting its registry.
+fn themed_messages(layout: serde_json::Value) -> (crate::app::App, tempfile::TempDir) {
+    let folder = tempfile::tempdir_in(super::local()).expect("test folder");
+    let source = folder.path().join("timeline-theme");
+    std::fs::create_dir_all(&source).expect("theme source");
+    let manifest = serde_json::json!({
+        "theme_api": 1,
+        "id": "dev.example.timeline",
+        "name": "Timeline renderer",
+        "version": "1.0.0",
+        "variants": {
+            "dark": {
+                "base": "yap",
+                "colours": {
+                    "chat": "#000000",
+                    "raised": "#000000",
+                    "accent": "#8be9fd",
+                    "faint": "#00ff00"
+                },
+                "layout": layout
+            }
+        }
+    });
+    std::fs::write(
+        source.join(yapfast_core::themes::MANIFEST),
+        serde_json::to_vec(&manifest).expect("manifest JSON"),
+    )
+    .expect("theme manifest");
+    let fetched = yapfast_core::themes::install::Fetched::local(&source).expect("local package");
+    yapfast_core::themes::install::Themes::open(folder.path())
+        .install(&fetched)
+        .expect("installed package");
+    std::fs::write(
+        folder.path().join("layout.json"),
+        br#"{"theme":"installed:dev.example.timeline"}"#,
+    )
+    .expect("chosen theme");
+    (super::start(&folder, true), folder)
+}
+
+/// Number of pixels near `colour` in a logical rectangle. The headless
+/// renderer draws at twice the window's logical scale.
+fn coloured_pixels(pixels: &[u8], width: u32, area: iced::Rectangle, colour: iced::Color) -> usize {
+    let [r, g, b, _] = colour.into_rgba8();
+    let scale = 2.0;
+    let left = (area.x.max(0.0) * scale) as usize;
+    let right = ((area.x + area.width).max(0.0) * scale) as usize;
+    let top = (area.y.max(0.0) * scale) as usize;
+    let bottom = ((area.y + area.height).max(0.0) * scale) as usize;
+    (top..bottom)
+        .flat_map(|y| (left..right).map(move |x| (y * width as usize + x) * 4))
+        .filter(|at| {
+            pixels.get(*at..*at + 3).is_some_and(|pixel| {
+                pixel
+                    .iter()
+                    .zip([r, g, b])
+                    .all(|(actual, wanted)| actual.abs_diff(wanted) <= 24)
+            })
+        })
+        .count()
+}
+
+#[test]
+fn a_resolved_bubble_gel_is_drawn_around_virtual_timeline_content() {
+    let (app, _folder) = themed_messages(serde_json::json!({
+        "messages": "bubbles",
+        "chat_avatars": false,
+        "bubbles": {
+            "padding": [14, 9],
+            "other": {
+                "ground": "#000000",
+                    "gloss": {
+                    "colour": "#b00000",
+                    "from": 1,
+                    "to": 1,
+                    "height": 0.8,
+                    "max": 96,
+                    "inset": [0, 0]
+                },
+                "rim": { "light": "#ff0000", "dark": "#ff0000" }
+            }
+        }
+    }));
+    let body = "Yep. I should be free after dinner.";
+    let mut ui =
+        iced_test::Simulator::with_size(iced::Settings::default(), app.shell.frame, app.view());
+    let text = ui
+        .find(body)
+        .expect("the themed message")
+        .visible_bounds()
+        .expect("visible message");
+    let area = iced::Rectangle::new(
+        iced::Point::new(text.x - 14.0, text.y - 9.0),
+        iced::Size::new(text.width + 28.0, text.height + 18.0),
+    );
+    let (width, _, pixels) = drawn(&mut ui);
+    assert!(
+        coloured_pixels(&pixels, width, area, iced::Color::from_rgb8(176, 0, 0)) > 80,
+        "the resolved gloss and rims are present around the rendered message"
+    );
+}
+
+#[test]
+fn a_resolved_irc_rule_repeats_beside_every_message_line() {
+    let (mut app, _folder) = themed_messages(serde_json::json!({
+        "messages": "irc",
+        "irc": { "time_width": 0, "nick_width": 64, "separator": "█", "rule": true }
+    }));
+    let body = "rule line one\nrule line two\nrule line three";
+    change(&mut app, |state| {
+        let messages = state
+            .messages
+            .iter()
+            .map(|message| {
+                let mut message = (**message).clone();
+                if message.author == "Riley" {
+                    message.body = body.into();
+                    message.formatted = false;
+                }
+                Arc::new(message)
+            })
+            .collect();
+        state.messages = Arc::new(messages);
+    });
+    let mut ui =
+        iced_test::Simulator::with_size(iced::Settings::default(), app.shell.frame, app.view());
+    let text = ui
+        .find(body)
+        .expect("the multiline IRC message")
+        .visible_bounds()
+        .expect("visible message");
+    let lower_rule = iced::Rectangle::new(
+        iced::Point::new(text.x - 28.0, text.y + text.height / 3.0),
+        iced::Size::new(24.0, text.height * 2.0 / 3.0),
+    );
+    let (width, _, pixels) = drawn(&mut ui);
+    assert!(
+        coloured_pixels(
+            &pixels,
+            width,
+            lower_rule,
+            iced::Color::from_rgb8(0, 255, 0)
+        ) > 20,
+        "the package separator continues through the wrapped lines"
+    );
+}
+
 #[test]
 fn a_messages_menu_replies_to_it() {
     let (mut app, _folder) = preview();

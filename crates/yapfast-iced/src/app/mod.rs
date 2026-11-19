@@ -27,7 +27,7 @@ mod window;
 
 pub use window::{Keep, Window};
 
-pub use self::message::{Message, Messages, batches};
+pub use self::message::{Message, Messages, batches, settings};
 
 /// What's under the pointer in each part of the window that shows it, by
 /// id: set on entering, cleared on leaving ([`point`]).
@@ -81,6 +81,8 @@ pub struct App {
     pub header: crate::header::Header,
     /// The channel's timeline: its rows, where it's scrolled, the selection.
     pub timeline: crate::timeline::Timeline,
+    /// The previous timeline while an installed theme changes channels.
+    pub theme_transition: crate::theme_transition::State,
     /// The server rail, the sidebar beside it and the member list.
     pub rail: crate::rail::Rail,
     pub sidebar: crate::sidebar::Sidebar,
@@ -218,8 +220,10 @@ impl App {
         yapfast_core::silence_audio();
         let (width, height) = (size.0 as f32, size.1 as f32);
         let layout = crate::layout::Layout::open(client.root(), &crate::build().version);
-        let themes = Themes::read(&layout);
+        let themes = Themes::read_sized(client.root(), &layout, size);
         let theme = themes.shown();
+        let theme_icons = themes.icons(&theme.id);
+        themes.apply_sounds(&theme.id);
         let (fitter, fitted) = crate::pictures::Fitter::new();
         let mut client = client;
         for action in layout.actions() {
@@ -235,7 +239,12 @@ impl App {
         // The window opens at its size in the desktop's pixels whatever the
         // zoom, and its layout gets fewer.
         let zoom = yapfast_core::zoom::saved(layout.zoom);
-        let navigation = crate::conversation::navigation(&layout);
+        let navigation = crate::conversation::themed_navigation(
+            &layout,
+            &theme,
+            themes.package_layout(&theme.id),
+            themes.chrome(&theme.id),
+        );
         let shell = crate::shell::Shell {
             zoom,
             own_title_bar: crate::window_bar::own(layout.system_title_bar),
@@ -249,13 +258,14 @@ impl App {
             inbox: None,
             bar_drag: Default::default(),
             announce_updates: false,
-            win: Window::new(crate::pictures::Pictures::new(fitter)),
+            win: Window::new(crate::pictures::Pictures::new(fitter), theme_icons),
             pointed: Pointed::default(),
             layout,
             aside_drag: None,
             minute: yapfast_core::clock::now_ms() / 1000 / 60 * 60,
             header: Default::default(),
             timeline: crate::timeline::Timeline::new(height, width - navigation),
+            theme_transition: Default::default(),
             rail: crate::rail::Rail::new(height),
             sidebar: crate::sidebar::Sidebar::new(height),
             roster: crate::members::Roster::new(height),
@@ -339,10 +349,15 @@ impl App {
             Task::none()
         };
         let away = crate::away::watch_away();
-        (app, Task::batch([sync, frames, focus, away, talk]))
+        let system_theme = iced::system::theme().map(Message::SystemTheme);
+        (
+            app,
+            Task::batch([sync, frames, focus, away, talk, system_theme]),
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let layers_before: Vec<_> = self.layers().collect();
         // What's on top, only while the backstop's log is read.
         let top = tracing::enabled!(tracing::Level::DEBUG).then(|| self.layers().next());
         self.focus_asked = false;
@@ -353,10 +368,49 @@ impl App {
             self.focus_backstop(top);
         }
         self.follow_popups();
+        let layers_after: Vec<_> = self.layers().collect();
+        let menu_before = layers_before.contains(&layers::Layer::Menu);
+        let menu_after = layers_after.contains(&layers::Layer::Menu);
+        if menu_before != menu_after {
+            self.cue(if menu_after {
+                yapfast_core::themes::media::SoundSlot::MenuOpen
+            } else {
+                yapfast_core::themes::media::SoundSlot::MenuClose
+            });
+        }
+        let popup_opened = layers_after
+            .iter()
+            .any(|layer| layer.cued_popup() && !layers_before.contains(layer));
+        let popup_closed = layers_before
+            .iter()
+            .any(|layer| layer.cued_popup() && !layers_after.contains(layer));
+        if popup_opened {
+            self.cue(yapfast_core::themes::media::SoundSlot::PopupOpen);
+        } else if popup_closed {
+            self.cue(yapfast_core::themes::media::SoundSlot::PopupClose);
+        }
         // The bar comes and goes with full screen, and the room under it
         // with it.
         crate::window_bar::fit_window(self);
         task
+    }
+
+    /// Plays one installed theme interface cue only while this window is
+    /// in front and the account is not in Do Not Disturb, on the same
+    /// speakers and volume as the rest of the app.
+    pub(crate) fn cue(&self, slot: yapfast_core::themes::media::SoundSlot) {
+        if !interface_cue_allowed(self.shell.focused, self.client.state().do_not_disturb()) {
+            return;
+        }
+        let Some((samples, volume)) = self.themes.cue(&self.theme.id, slot) else {
+            return;
+        };
+        let voice = &self.client.state().voice;
+        yapfast_core::sounds::play_decoded(
+            samples,
+            volume * yapfast_core::volume::speakers(),
+            voice.speaker.as_deref(),
+        );
     }
 
     fn handle_message(&mut self, message: Message) -> Task<Message> {
@@ -450,6 +504,32 @@ impl App {
                 Task::none()
             }
             Message::FontsLoaded => Task::none(),
+            Message::SystemTheme(mode) => {
+                let mode = match mode {
+                    iced::theme::Mode::Light => yapfast_core::themes::Mode::Light,
+                    iced::theme::Mode::None | iced::theme::Mode::Dark => {
+                        yapfast_core::themes::Mode::Dark
+                    }
+                };
+                if self.themes.system_mode_changed(mode) {
+                    self.show_theme(self.themes.shown());
+                }
+                Task::none()
+            }
+            Message::ThemeTrialTick(now) => {
+                if self.themes.expire_trial(now).is_some() {
+                    self.layout.theme_sounds.remove("trial");
+                    self.layout.theme_content.remove("trial");
+                    self.show_theme(self.themes.shown());
+                } else {
+                    self.dirty = true;
+                }
+                Task::none()
+            }
+            Message::ThemeTransitionDone(started) => {
+                self.theme_transition.finish(started);
+                Task::none()
+            }
             Message::Nothing => Task::none(),
             Message::Bell => {
                 // Under the bell, 6 px down.
@@ -506,7 +586,7 @@ impl App {
                 Task::none()
             }
             Message::Call(event) => crate::call::update(self, event),
-            Message::Settings(event) => self.settings_event(event),
+            Message::Settings(event) => self.settings_event(*event),
             Message::Updates(event) => crate::updates::update(self, event),
             Message::Keybinds(count, told) => crate::keybinds::keybinds_told(self, count, told),
             Message::ServerSettings(event) => self.server_settings_event(event),
@@ -550,6 +630,10 @@ impl App {
     }
 }
 
+fn interface_cue_allowed(focused: bool, do_not_disturb: bool) -> bool {
+    focused && !do_not_disturb
+}
+
 /// Keeps the thing the pointer is on: set on entering, cleared on leaving
 /// only if it's still the one left (the next one's entering may come first).
 pub fn point<T: PartialEq>(pointed: &mut Option<T>, id: T, entered: bool) {
@@ -566,4 +650,14 @@ pub fn key(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod theme_cue_tests {
+    #[test]
+    fn theme_interface_cues_rest_out_of_focus_and_in_do_not_disturb() {
+        assert!(super::interface_cue_allowed(true, false));
+        assert!(!super::interface_cue_allowed(false, false));
+        assert!(!super::interface_cue_allowed(true, true));
+    }
 }

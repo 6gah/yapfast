@@ -126,7 +126,7 @@ pub fn inline_edit<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
             ground: iced::Color::TRANSPARENT,
             text: theme.text,
             placeholder: theme.placeholder,
-            selection: theme.selection,
+            selection: theme.token_colour("selection", theme.selection),
         },
     )
     .padding(Padding {

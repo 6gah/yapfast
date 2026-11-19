@@ -355,8 +355,19 @@ fn finish_moving(app: &mut App) -> Task<Message> {
         return Task::none();
     };
     let (top, bottom) = side_list_span(app);
-    let left = crate::rail::WIDTH;
-    let within = (left..left + sidebar::width(&app.layout)).contains(&moving.at.x)
+    let package = app.themes.package_layout(&app.theme.id);
+    let left = if crate::conversation::navigation_right(package) {
+        app.window.width
+            - crate::conversation::themed_navigation(
+                &app.layout,
+                &app.theme,
+                package,
+                app.themes.chrome(&app.theme.id),
+            )
+    } else {
+        crate::rail::resolved_width(package, app.themes.chrome(&app.theme.id))
+    };
+    let within = (left..left + sidebar::width(&app.layout, &app.theme)).contains(&moving.at.x)
         && (top..bottom).contains(&moving.at.y);
     let action = moving
         .hovered
@@ -437,7 +448,7 @@ impl<'a> crate::sidebar::View<'a> {
         .align_y(Alignment::Center);
         let ground = faded(theme.active, GHOST);
         let ghost = container(face)
-            .width(sidebar::width(self.cx.layout) - 48.0)
+            .width(sidebar::width(self.cx.layout, self.cx.look.theme) - 48.0)
             .height(30)
             .align_y(Alignment::Center)
             .style(move |_| rounded(ground, 4));

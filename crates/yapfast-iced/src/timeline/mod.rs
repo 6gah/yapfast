@@ -61,6 +61,15 @@ pub const END_PAD: f32 = 48.0;
 pub const GROUP_GAP: f32 = 16.0;
 const DIVIDED_GAP: f32 = 12.0;
 const ROW_GAP: f32 = 1.0;
+
+pub fn avatar(theme: &crate::theme::Theme) -> f32 {
+    theme.spacing().avatar_size.unwrap_or(AVATAR)
+}
+
+pub fn gutter(theme: &crate::theme::Theme) -> f32 {
+    let spacing = theme.spacing();
+    avatar(theme) + 2.0 * spacing.chat_padding.unwrap_or((GUTTER - AVATAR) / 2.0)
+}
 /// The divider's line and what's on it, and the space under the last row.
 const DIVIDER: f32 = 26.0;
 const TAIL: f32 = 20.0;
@@ -448,37 +457,6 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
     }
 }
 
-/// A theme switch: the text laid out in the old theme's inks (its
-/// mentions', a notice's) is laid out again in the new one's, in the
-/// channel's timeline and the thread beside, the rows keeping their
-/// heights. A switch that keeps those inks costs nothing.
-pub fn recolour(app: &mut App, old: &crate::theme::Theme) {
-    let theme = &app.theme;
-    if (theme.mention, theme.text, theme.muted) == (old.mention, old.text, old.muted) {
-        return;
-    }
-    let (mention, ink, muted) = (rgb(theme.mention), rgb(theme.text), rgb(theme.muted));
-    let revealed = &app.timeline.revealed;
-    let lay = |message: &ChatMessage| {
-        Arc::new(body_of(message, mention, ink, muted, |spoiler| {
-            revealed.contains(&format!("{}/{spoiler}", message.item))
-        }))
-    };
-    for (look, message) in app
-        .timeline
-        .looks
-        .iter_mut()
-        .zip(app.timeline.messages.iter())
-    {
-        look.body = lay(message);
-    }
-    if let Some(aside) = &mut app.aside {
-        for (look, message) in aside.looks.iter_mut().zip(aside.messages.iter()) {
-            look.body = lay(message);
-        }
-    }
-}
-
 /// A spoiler over a message's attachment was clicked: it shows.
 pub fn reveal(app: &mut App, item: &str, attachment: usize) -> Task<Message> {
     app.timeline
@@ -547,7 +525,7 @@ impl<'a> crate::ctx::Ctx<'a> {
             ),
             _ => (
                 LanePlace {
-                    left: crate::conversation::navigation(self.layout),
+                    left: crate::conversation::navigation_left_ctx(self),
                     width: self.lanes.timeline.width,
                     top: Some(self.lanes.timeline.place.get())
                         .filter(|place| place.height > 0.0)
@@ -571,6 +549,12 @@ impl<'a> crate::ctx::Ctx<'a> {
             None if row == 0 => self.lanes.timeline.edge.height(),
             None => 0.0,
         };
-        lane.top + top + edge + self.row_look(row).map_or(0.0, top_space)
+        let spacing = self.look.theme.spacing();
+        lane.top
+            + top
+            + edge
+            + self
+                .row_look(row)
+                .map_or(0.0, |look| top_space(look, spacing))
     }
 }

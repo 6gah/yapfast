@@ -6,18 +6,21 @@
 use crate::widgets::scroll_view;
 use iced::{
     Alignment, Color, Element, Length, Padding, Point, Rectangle, Size, Task, Vector,
-    widget::{Space, column, container, mouse_area, row, scrollable::Viewport, text, tooltip},
+    widget::{
+        Space, column, container, mouse_area, row, scrollable::Viewport, stack, text, tooltip,
+    },
 };
 use yapfast_core::{
     application::{Action, AppState},
     chat::{ActivityKind, ChatMember, Presence},
+    themes::content::Nameplates,
 };
 
 use crate::{
     app::{App, Message, key, point},
     controls::{self, bar, lit_style},
     ctx::Ctx,
-    fonts::{MEDIUM, SEMIBOLD},
+    fonts::{MEDIUM, REGULAR, SEMIBOLD},
     header,
     looks::{self, Chip, MemberLine, MemberLook},
     people::StatusInk,
@@ -27,7 +30,7 @@ use crate::{
     style::{
         CHIP, CROWN, HEADING, MEMBER_HOVER, MEMBER_OPEN, faded, fill, hex, rounded, scrollbar,
     },
-    sync::Scroll,
+    sync::{MARGIN, Scroll},
     theme::rgb,
     widgets::{Pic, PlateRow, RightPress, Rows},
 };
@@ -56,6 +59,8 @@ pub struct Roster {
     pub scroll: crate::sync::Scroll,
     /// The header's toggle hid the list.
     pub hidden: bool,
+    /// A collapsed owner-theme strip expands while the pointer is over it.
+    pub collapsed_open: bool,
     /// The width the list had as its edge was pressed, while it's dragged.
     pub drag: Option<f32>,
 }
@@ -70,6 +75,11 @@ pub fn view<'a>(roster: &'a Roster, cx: Ctx<'a>) -> Element<'a, Message> {
 struct View<'a> {
     s: &'a Roster,
     cx: Ctx<'a>,
+}
+
+enum GridLine<'a> {
+    Heading(&'a str, Option<&'a str>),
+    Members(Vec<&'a MemberLook>),
 }
 
 impl Roster {
@@ -107,6 +117,7 @@ impl Roster {
             activity_for: (std::sync::Arc::from([]), None),
             scroll: crate::sync::Scroll::new(height),
             hidden: false,
+            collapsed_open: false,
             drag: None,
         }
     }
@@ -118,16 +129,36 @@ const LEAST: f32 = 200.0;
 const MOST: f32 = 480.0;
 
 /// The member list's width: as its edge was dragged, else [`WIDTH`].
-pub fn width(layout: &crate::layout::Layout) -> f32 {
+pub fn width(layout: &crate::layout::Layout, theme: &crate::theme::Theme) -> f32 {
     layout
         .members_width
+        .or(theme.spacing().members_width)
         .map_or(WIDTH, |width| width.clamp(LEAST, MOST))
+}
+
+pub fn docked_width(app: &App) -> f32 {
+    let collapsed = app
+        .themes
+        .package_layout(&app.theme.id)
+        .and_then(|layout| layout.members)
+        == Some(yapfast_core::themes::layout::MembersSide::Collapsed);
+    if collapsed && !app.roster.collapsed_open {
+        56.0
+    } else {
+        width(&app.layout, &app.theme)
+    }
 }
 
 /// `width` within what the list may take: 200 to 480 px, and no more than
 /// leaves the conversation 420 px.
 fn room(app: &App, width: f32) -> f32 {
-    let most = app.window.width - crate::conversation::chat_left(app) - crate::thread::CHAT_KEPT;
+    // `chat_left`/`chat_right` describe the chat after the currently drawn
+    // member list has taken its share. Put that share back before working
+    // out how wide the dragged list may become. This is the same calculation
+    // for a list docked on either side of the chat.
+    let current = self::width(&app.layout, &app.theme);
+    let most = crate::conversation::chat_right(app) - crate::conversation::chat_left(app) + current
+        - crate::thread::CHAT_KEPT;
     width.clamp(LEAST, most.clamp(LEAST, MOST))
 }
 /// Where each line starts after the last, and the room above the first.
@@ -135,6 +166,14 @@ pub const PITCH: f32 = 44.0;
 pub const TOP: f32 = 8.0;
 /// A line's height.
 const ROW: f32 = 42.0;
+
+fn row_height(theme: &crate::theme::Theme) -> f32 {
+    theme.spacing().member_row_height.unwrap_or(ROW)
+}
+
+pub(crate) fn pitch(theme: &crate::theme::Theme, gap: Option<f32>) -> f32 {
+    row_height(theme) + gap.unwrap_or(PITCH - ROW)
+}
 /// Discord's boosting pink, the same in every theme.
 const BOOST: u32 = 0xff73fa;
 /// The Activity panel: its header, a card and the room each card keeps
@@ -173,6 +212,8 @@ pub enum Event {
     /// A card of the Activity panel was clicked, by whose it is: the
     /// cards may have moved since.
     OpenActivity(String),
+    /// The pointer entered or left a collapsed owner-theme member strip.
+    Collapsed(bool),
 }
 
 /// A card of the Activity panel, from Discord's feed.
@@ -194,6 +235,13 @@ pub struct ActivityCard {
 /// How many of the Activity panel's cards show.
 /// The Activity panel's height, which the list starts below.
 pub fn activity_height(app: &App) -> f32 {
+    if app
+        .themes
+        .member_rows(&app.theme.id)
+        .is_some_and(|rows| !rows.activity)
+    {
+        return 0.0;
+    }
     app.roster
         .activity_height(app.client.state(), crate::header::members_shown(app))
 }
@@ -211,13 +259,20 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
         }
         Event::Open(id) => open_member(app, &id),
         Event::Resize(by) => {
-            let from = *app.roster.drag.get_or_insert(width(&app.layout));
+            let from = *app
+                .roster
+                .drag
+                .get_or_insert(width(&app.layout, &app.theme));
             app.layout.members_width = Some(room(app, from - by));
             Task::none()
         }
         Event::Resized => {
             app.roster.drag = None;
-            crate::layout::store(app.client.root(), "members_width", width(&app.layout));
+            crate::layout::store(
+                app.client.root(),
+                "members_width",
+                width(&app.layout, &app.theme),
+            );
             app.ask()
         }
         Event::ResetWidth => {
@@ -235,6 +290,10 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
             app.roster.hidden = !app.roster.hidden;
             // Hidden, the list lets its lines and pictures go.
             Task::batch([app.sync(), app.ask()])
+        }
+        Event::Collapsed(open) => {
+            app.roster.collapsed_open = open;
+            app.ask()
         }
         Event::ToggleActivity => {
             if app.client.state().activity_cards_hidden {
@@ -258,7 +317,7 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
                 return Task::none();
             };
             let top = header::HEIGHT + 1.0 + PANEL_TOP + ACTIVITY_HEAD + index as f32 * CARD_PITCH;
-            let left = app.window.width - width(&app.layout);
+            let left = app.window.width - width(&app.layout, &app.theme);
             let at = Point::new(left - 8.0 - profile::WIDTH, top - 16.0);
             app.open_card(card.id.clone(), at)
         }
@@ -303,9 +362,14 @@ pub fn open_member(app: &mut App, id: &str) -> Task<Message> {
     else {
         return Task::none();
     };
-    let top = header::HEIGHT + 1.0 + activity_height(app) + TOP + index as f32 * PITCH
-        - app.roster.scroll.offset;
-    let left = app.window.width - width(&app.layout);
+    let gap = app
+        .themes
+        .member_rows(&app.theme.id)
+        .and_then(|rows| rows.gap);
+    let top =
+        header::HEIGHT + 1.0 + activity_height(app) + TOP + index as f32 * pitch(&app.theme, gap)
+            - app.roster.scroll.offset;
+    let left = app.window.width - width(&app.layout, &app.theme);
     let at = Point::new(left - 8.0 - profile::WIDTH, top - 16.0);
     let user = look.id.clone();
     app.open_card(user, at)
@@ -454,6 +518,34 @@ pub fn finished_ago(at_ms: u64, now_ms: u64) -> String {
 /// The account's own nameplate behind its card or a tile `height` tall,
 /// with its palette's colour for the theme: .4 strong, .6 when `hot`,
 /// playing when `play`. None without one, or with Show nameplates off.
+fn nameplate_policy(ctx: crate::ctx::Ctx<'_>) -> Nameplates {
+    ctx.themes
+        .content(
+            &ctx.look.theme.id,
+            ctx.layout.theme_content.contains(&ctx.look.theme.id),
+        )
+        .map_or(Nameplates::Keep, |content| content.names.nameplates)
+}
+
+pub(crate) fn show_nameplate(policy: Nameplates, hidden: bool) -> bool {
+    !hidden && policy != Nameplates::Hide
+}
+
+fn policy_palette(policy: Nameplates, palette: Option<Color>, accent: Color) -> Option<Color> {
+    match policy {
+        Nameplates::Keep => palette,
+        Nameplates::Hide => None,
+        Nameplates::Tint => Some(accent),
+    }
+}
+
+/// A nameplate's palette after the opted-in theme's Hide/Tint policy. Tint
+/// gives the row wash the theme accent; the plate image itself still uses
+/// the renderer's stock image path.
+pub fn themed_nameplate_palette(ctx: crate::ctx::Ctx<'_>, palette: Option<Color>) -> Option<Color> {
+    policy_palette(nameplate_policy(ctx), palette, ctx.look.theme.accent)
+}
+
 pub fn account_plate<'a>(
     ctx: crate::ctx::Ctx<'a>,
     height: f32,
@@ -461,10 +553,11 @@ pub fn account_plate<'a>(
     play: bool,
 ) -> Option<(Element<'a, Message>, Option<Color>)> {
     let state = ctx.state;
+    let policy = nameplate_policy(ctx);
     let plate = state
         .account_nameplate
         .as_ref()
-        .filter(|_| !state.hide_nameplates)?;
+        .filter(|_| show_nameplate(policy, state.hide_nameplates))?;
     let picture = plate_picture(
         ctx,
         &plate.picture,
@@ -475,7 +568,10 @@ pub fn account_plate<'a>(
     let palette = plate
         .colors
         .map(|[dark, light]| hex(if ctx.look.theme.dark { dark } else { light }));
-    Some((picture, palette))
+    Some((
+        picture,
+        policy_palette(policy, palette, ctx.look.theme.accent),
+    ))
 }
 
 /// A nameplate's picture at a row's right end, `height` tall, at
@@ -523,24 +619,137 @@ pub fn nameplate<'a>(
     selected: bool,
     opacity: f32,
 ) -> Option<Element<'a, Message>> {
+    if !show_nameplate(nameplate_policy(ctx), ctx.state.hide_nameplates) {
+        return None;
+    }
     let strength = if pointed || selected { 0.9 } else { 0.6 } * opacity;
     plate_picture(ctx, url, height, strength, pointed)
 }
 
 impl<'a> View<'a> {
     pub fn members_view(self) -> Element<'a, Message> {
-        let (first, last) = self.s.scroll.range(self.s.lines.len(), PITCH, TOP);
-        let total = TOP + self.s.lines.len() as f32 * PITCH + 10.0;
+        let collapsed = self
+            .cx
+            .themes
+            .package_layout(&self.cx.look.theme.id)
+            .and_then(|layout| layout.members)
+            == Some(yapfast_core::themes::layout::MembersSide::Collapsed);
+        if collapsed && !self.s.collapsed_open {
+            return self.collapsed_view();
+        }
+        if self
+            .cx
+            .themes
+            .package_layout(&self.cx.look.theme.id)
+            .and_then(|layout| layout.members_style)
+            == Some(yapfast_core::themes::layout::MembersStyle::Grid)
+        {
+            return self.grid_view(collapsed);
+        }
+        let themed_rows = self.cx.themes.member_rows(&self.cx.look.theme.id);
+        let pitch = pitch(self.cx.look.theme, themed_rows.and_then(|rows| rows.gap));
+        let row_height = row_height(self.cx.look.theme);
+        let (first, last) = self.s.scroll.range(self.s.lines.len(), pitch, TOP);
+        let total = TOP
+            + self.s.lines.len() as f32 * pitch
+            + 10.0
+            + themed_rows.map_or(0.0, |rows| rows.reserve);
         let mut rows = Rows::new(total);
         for (index, line) in self.s.lines.iter().enumerate().take(last).skip(first) {
-            let top = TOP + index as f32 * PITCH;
+            let top = TOP + index as f32 * pitch;
             let (id, row) = match line {
                 MemberLine::Heading { text, icon } => {
                     (text.as_str(), self.heading_row(text, icon.as_deref()))
                 }
                 MemberLine::Member(look) => (look.id.as_str(), self.member_row(look)),
             };
-            rows.push(key(id), top, ROW, container(row).padding([0, 8]));
+            let (left, right) = themed_rows
+                .and_then(|rows| rows.margin)
+                .unwrap_or((8.0, 8.0));
+            let row = container(row).padding(Padding {
+                left,
+                right,
+                ..Padding::ZERO
+            });
+            let row: Element<'a, Message> = if matches!(line, MemberLine::Member(_))
+                && let Some(stripe) = self
+                    .cx
+                    .look
+                    .theme
+                    .surface_stripe("row")
+                    .filter(|stripe| stripe.members && index % 2 == 1)
+            {
+                container(row)
+                    .width(Length::Fill)
+                    .style(move |_| fill(stripe.colour))
+                    .into()
+            } else {
+                row.into()
+            };
+            let row: Element<'a, Message> = if matches!(line, MemberLine::Member(_)) {
+                match themed_rows.and_then(|rows| rows.separator.as_ref()) {
+                    Some(yapfast_core::themes::lists::Separator::Line {
+                        colour,
+                        width,
+                        inset: (line_left, line_right),
+                    }) => {
+                        let line =
+                            container(bar(crate::themes::argb(*colour), Length::Fill, *width))
+                                .padding(Padding {
+                                    left: *line_left,
+                                    right: *line_right,
+                                    ..Padding::ZERO
+                                });
+                        stack![
+                            row,
+                            crate::controls::placed(line, 0.0, (row_height - *width).max(0.0))
+                        ]
+                        .into()
+                    }
+                    Some(yapfast_core::themes::lists::Separator::Art { art, height }) => {
+                        match crate::theme_art::tile_art(
+                            self.cx,
+                            yapfast_core::themes::package::art::ArtSurface::Members,
+                            art,
+                            width(self.cx.layout, self.cx.look.theme),
+                            *height,
+                        ) {
+                            Some(separator) => stack![
+                                row,
+                                crate::controls::placed(
+                                    separator,
+                                    0.0,
+                                    (row_height - *height).max(0.0)
+                                )
+                            ]
+                            .into(),
+                            None => row,
+                        }
+                    }
+                    None => row,
+                }
+            } else {
+                row
+            };
+            rows.push(key(id), top, row_height, row);
+        }
+        if themed_rows.is_some_and(|rows| rows.reserve > 0.0)
+            && let Some(rows_theme) = themed_rows
+            && let Some(foot) = rows_theme.foot.as_ref()
+            && let Some(art) = crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Members,
+                foot,
+                width(self.cx.layout, self.cx.look.theme),
+                rows_theme.reserve,
+            )
+        {
+            rows.push(
+                key("theme:member-foot"),
+                total - rows_theme.reserve,
+                rows_theme.reserve,
+                art,
+            );
         }
         // The chat's ground, an outline down its left edge.
         let (ground, edge) = (self.cx.look.theme.chat, self.cx.look.theme.outline_chat);
@@ -565,19 +774,27 @@ impl<'a> View<'a> {
         let note = note.map(|note| {
             container(
                 text(note)
-                    .size(13)
+                    .size(self.cx.look.theme.type_size("body", 13.0))
+                    .font(self.cx.look.theme.font("body", REGULAR))
                     .color(self.cx.look.theme.muted)
                     .width(Length::Fill),
             )
             .padding(16)
         });
-        let list: Element<'a, Message> = column![]
-            .push(self.activity_panel())
-            .push(note)
-            .push(list)
-            .into();
+        let mut contents = column![];
+        if let Some(title) = self.title_line() {
+            contents = contents.push(title);
+        }
+        if themed_rows.is_none_or(|rows| rows.activity) {
+            contents = contents.push(self.activity_panel());
+        }
+        contents = contents.push(note).push(list);
+        if let Some(footer) = self.footer_art() {
+            contents = contents.push(footer);
+        }
+        let list: Element<'a, Message> = contents.into();
         let list = container(row![bar(edge, 1, Length::Fill), list])
-            .width(width(self.cx.layout))
+            .width(width(self.cx.layout, self.cx.look.theme))
             .height(Length::Fill)
             .style(move |_| fill(ground));
         // Its edge drags it wider or narrower, over the line.
@@ -590,32 +807,520 @@ impl<'a> View<'a> {
             Message::Members(Event::Resized),
             Message::Members(Event::ResetWidth),
         );
-        iced::widget::stack![list, splitter].into()
+        let panel: Element<'a, Message> = iced::widget::stack![list, splitter].into();
+        if collapsed {
+            mouse_area(panel)
+                .on_exit(Message::Members(Event::Collapsed(false)))
+                .into()
+        } else {
+            panel
+        }
+    }
+
+    /// A collapsed member pane is a 56 px strip of avatars. Entering it
+    /// opens the ordinary pane over its share; leaving closes it again.
+    fn collapsed_view(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let mut faces = column![].spacing(6).padding([8, 8]);
+        for line in &self.s.lines {
+            let MemberLine::Member(look) = line else {
+                continue;
+            };
+            let id = look.id.clone();
+            let menu_id = look.id.clone();
+            let origin = self.member_list_origin();
+            let pointed = self.cx.pointed.member.as_ref() == Some(&look.id);
+            let face = self.cx.face(
+                Face::new(look.avatar.as_deref(), &look.name, 40.0)
+                    .opacity(if look.offline() { 0.4 } else { 1.0 })
+                    .decoration(look.decoration.as_deref(), pointed),
+            );
+            let area = mouse_area(face)
+                .interaction(iced::mouse::Interaction::Pointer)
+                .on_enter(Message::Members(Event::Point(id.clone(), true)))
+                .on_exit(Message::Members(Event::Point(id.clone(), false)))
+                .on_press(Message::Members(Event::Open(id)));
+            let area = RightPress::new(area, move |at| {
+                Message::PersonMenu(menu_id.clone(), at + origin)
+            });
+            faces = faces.push(
+                tooltip(
+                    area,
+                    controls::tip(theme, look.name.clone()),
+                    tooltip::Position::Left,
+                )
+                .gap(6),
+            );
+        }
+        let list = scroll_view(faces)
+            .height(Length::Fill)
+            .style(scrollbar(theme));
+        let panel = container(list)
+            .width(56)
+            .height(Length::Fill)
+            .style(move |_| fill(theme.chat));
+        mouse_area(panel)
+            .on_enter(Message::Members(Event::Collapsed(true)))
+            .into()
+    }
+
+    fn grid_view(self, collapsed: bool) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let package = self
+            .cx
+            .themes
+            .package_layout(&theme.id)
+            .expect("grid members belong to an installed package");
+        let themed = package.member_rows.as_ref();
+        let columns = package.grid.columns.max(1) as usize;
+        let tile_height = themed
+            .and_then(|rows| rows.height)
+            .unwrap_or(package.grid.size + 34.0);
+        let gap = themed.and_then(|rows| rows.gap).unwrap_or(4.0);
+        let heading_height = themed.and_then(|rows| rows.headers.height).unwrap_or(42.0);
+
+        let mut visual = Vec::new();
+        let mut pending = Vec::with_capacity(columns);
+        for line in &self.s.lines {
+            match line {
+                MemberLine::Heading { text, icon } => {
+                    if !pending.is_empty() {
+                        visual.push(GridLine::Members(std::mem::take(&mut pending)));
+                    }
+                    visual.push(GridLine::Heading(text, icon.as_deref()));
+                }
+                MemberLine::Member(look) => {
+                    pending.push(look.as_ref());
+                    if pending.len() == columns {
+                        visual.push(GridLine::Members(std::mem::take(&mut pending)));
+                    }
+                }
+            }
+        }
+        if !pending.is_empty() {
+            visual.push(GridLine::Members(pending));
+        }
+
+        let reserve = themed.map_or(0.0, |rows| rows.reserve);
+        let total = TOP
+            + visual
+                .iter()
+                .map(|line| match line {
+                    GridLine::Heading(..) => heading_height + gap,
+                    GridLine::Members(..) => tile_height + gap,
+                })
+                .sum::<f32>()
+            + 10.0
+            + reserve;
+        let viewport = self.s.scroll;
+        let mut rows = Rows::new(total);
+        let mut top = TOP;
+        for line in visual {
+            let height = match &line {
+                GridLine::Heading(..) => heading_height,
+                GridLine::Members(..) => tile_height,
+            };
+            let at = top;
+            top += height + gap;
+            if at + height < viewport.offset - MARGIN
+                || at > viewport.offset + viewport.height + MARGIN
+            {
+                continue;
+            }
+            match line {
+                GridLine::Heading(heading, icon) => {
+                    rows.push(key(heading), at, height, self.heading_row(heading, icon));
+                }
+                GridLine::Members(members) => {
+                    let first = members.first().map_or("grid", |look| look.id.as_str());
+                    let mut tiles = row![].spacing(gap).height(height);
+                    let count = members.len();
+                    for look in members {
+                        tiles = tiles.push(
+                            container(self.grid_tile(look, package.grid.size, height))
+                                .width(Length::FillPortion(1)),
+                        );
+                    }
+                    for _ in count..columns {
+                        tiles = tiles.push(Space::new().width(Length::FillPortion(1)));
+                    }
+                    let (left, right) = themed.and_then(|rows| rows.margin).unwrap_or((8.0, 8.0));
+                    rows.push(
+                        key(first),
+                        at,
+                        height,
+                        container(tiles).padding(Padding {
+                            left,
+                            right,
+                            ..Padding::ZERO
+                        }),
+                    );
+                }
+            }
+        }
+        if reserve > 0.0
+            && let Some(foot) = themed.and_then(|rows| rows.foot.as_ref())
+            && let Some(art) = crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Members,
+                foot,
+                width(self.cx.layout, theme),
+                reserve,
+            )
+        {
+            rows.push(key("theme:member-grid-foot"), total - reserve, reserve, art);
+        }
+
+        let list = scroll_view(rows)
+            .on_scroll(|viewport| Message::Members(Event::Scrolled(viewport)))
+            .height(Length::Fill)
+            .style(scrollbar(theme));
+        let note = match &self.cx.state.members {
+            None => Some("Loading members..."),
+            Some(Err(error)) => Some(*error),
+            Some(Ok(members)) if members.is_empty() => Some("No one else has joined yet."),
+            Some(Ok(_)) => None,
+        }
+        .map(|note| {
+            container(
+                text(note)
+                    .size(theme.type_size("body", 13.0))
+                    .font(theme.font("body", REGULAR))
+                    .color(theme.muted),
+            )
+            .padding(16)
+        });
+        let mut contents = column![];
+        if let Some(title) = self.title_line() {
+            contents = contents.push(title);
+        }
+        if themed.is_none_or(|rows| rows.activity) {
+            contents = contents.push(self.activity_panel());
+        }
+        contents = contents.push(note).push(list);
+        if let Some(footer) = self.footer_art() {
+            contents = contents.push(footer);
+        }
+        let list: Element<'a, Message> = contents.into();
+        let panel = container(row![bar(theme.outline_chat, 1, Length::Fill), list])
+            .width(width(self.cx.layout, theme))
+            .height(Length::Fill)
+            .style(move |_| fill(theme.chat));
+        let splitter = crate::widgets::Splitter::new(
+            Color::TRANSPARENT,
+            theme.line,
+            theme.faint,
+            |by| Message::Members(Event::Resize(by)),
+            Message::Members(Event::Resized),
+            Message::Members(Event::ResetWidth),
+        );
+        let panel: Element<'a, Message> = stack![panel, splitter].into();
+        if collapsed {
+            mouse_area(panel)
+                .on_exit(Message::Members(Event::Collapsed(false)))
+                .into()
+        } else {
+            panel
+        }
+    }
+
+    /// A package's optional line above the member list, such as `$ who`.
+    /// Stock themes do not grow a new header: the row exists only when the
+    /// installed package supplied `chrome.labels.members_title`.
+    fn title_line(self) -> Option<Element<'a, Message>> {
+        let theme = self.cx.look.theme;
+        let chrome = self.cx.themes.chrome(&theme.id)?;
+        let template = chrome
+            .labels
+            .get(&yapfast_core::themes::chrome::Label::MembersTitle)?;
+        let count = self
+            .s
+            .lines
+            .iter()
+            .filter(|line| matches!(line, MemberLine::Member(_)))
+            .count()
+            .to_string();
+        let words = yapfast_core::themes::chrome::fill(template, &[("n", count.as_str())]);
+        let listed = self.cx.themes.member_rows(&theme.id).map(|rows| rows.title);
+        let role = listed
+            .and_then(|title| title.font)
+            .map(yapfast_core::themes::lists::FontRole::name)
+            .or_else(|| chrome.font.map(yapfast_core::themes::package::Role::name))
+            .unwrap_or("labels");
+        let size = listed
+            .and_then(|title| title.size)
+            .unwrap_or_else(|| theme.type_size(role, 14.0));
+        let ink = listed
+            .and_then(|title| title.colour)
+            .map(crate::themes::argb)
+            .unwrap_or(theme.muted);
+        let line = text(words)
+            .size(size)
+            .font(theme.font(role, MEDIUM))
+            .color(ink)
+            .wrapping(text::Wrapping::None);
+        let mut title = container(line)
+            .padding(Padding {
+                left: 16.0,
+                right: 8.0,
+                ..Padding::ZERO
+            })
+            .height(32)
+            .align_y(Alignment::End);
+        if listed.is_some_and(|title| title.centre) {
+            title = title.align_x(Alignment::Center);
+        }
+        Some(title.into())
+    }
+
+    /// Owner-theme stickers or blinkies fixed at the member list's foot,
+    /// outside its scrolling rows, matching the Slint Trim footer.
+    fn footer_art(self) -> Option<Element<'a, Message>> {
+        let theme = self.cx.look.theme;
+        let height = self.cx.themes.footer_height(&theme.id)?;
+        Some(crate::theme_art::surface(
+            Space::new().width(Length::Fill).height(height),
+            self.cx,
+            yapfast_core::themes::package::art::ArtSurface::Footer,
+        ))
+    }
+
+    fn grid_tile(self, look: &'a MemberLook, avatar: f32, height: f32) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let rows = self.cx.themes.member_rows(&theme.id);
+        let pointed = self.cx.pointed.member.as_ref() == Some(&look.id);
+        let selected = self
+            .cx
+            .profiles
+            .card
+            .as_ref()
+            .is_some_and(|card| card.user == look.id);
+        let offline = look.offline();
+        let frame =
+            rows.and_then(|rows| crate::theme_art::picked_tile(&rows.avatar.frame, &look.id));
+        let face = self.cx.face(
+            Face::new(look.avatar.as_deref(), &look.name, avatar)
+                .opacity(if offline { 0.4 } else { 1.0 })
+                .decoration(look.decoration.as_deref(), pointed)
+                .frame(frame),
+        );
+        let stock = look.color.map_or(theme.text, hex);
+        let ink = rows
+            .and_then(|rows| rows.name_ink)
+            .map(crate::themes::argb)
+            .unwrap_or(stock);
+        let name = crate::themes::list_case(rows.and_then(|rows| rows.case), &look.name);
+        let size = rows
+            .and_then(|rows| rows.size)
+            .unwrap_or_else(|| theme.type_size("names", 13.0));
+        let weight = rows.and_then(|rows| rows.weight).unwrap_or(600.0).round() as u16;
+        let styled_font = look.style.as_ref().and_then(looks::NameLook::font);
+        let shown = crate::fonts::shown_name(&name, styled_font).into_owned();
+        let glow_label = |colour| {
+            let stock = crate::fonts::style_font(styled_font, weight);
+            let font = if styled_font.is_some() {
+                stock
+            } else {
+                theme.font("names", stock)
+            };
+            container(
+                text(shown.clone())
+                    .size(size)
+                    .font(font)
+                    .color(colour)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .height(20)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+        };
+        let mut name_layers = stack![];
+        if let Some(glow) = rows.and_then(|rows| rows.name_glow) {
+            let glow = crate::themes::argb(glow).scale_alpha(0.4);
+            for (x, y) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5)] {
+                name_layers = name_layers.push(controls::placed(glow_label(glow), x, y));
+            }
+        }
+        let main_name = self.cx.person_name(
+            name.into_owned(),
+            NameInk::new(size, weight, faded(ink, if offline { 0.5 } else { 1.0 }))
+                .style(look.style.as_ref())
+                .key(&look.id),
+        );
+        name_layers = name_layers.push(
+            container(main_name)
+                .width(Length::Fill)
+                .height(20)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        );
+        let mut name_line = row![name_layers]
+            .width(Length::Fill)
+            .align_y(Alignment::Center);
+        if look.owner {
+            let crown = rows.and_then(|rows| rows.crown_ink).unwrap_or(CROWN);
+            name_line =
+                name_line.push(Pic::square(self.cx.look.icon(Icon::Crown, 14, crown), 14.0));
+        }
+        let content = column![face, name_line]
+            .spacing(3)
+            .align_x(Alignment::Center)
+            .width(Length::Fill);
+        let outlined = rows.is_some_and(|rows| rows.tile_outline);
+        let mut border = if outlined {
+            theme.surface_border("tile", 8.0, 0.0, Color::TRANSPARENT)
+        } else {
+            iced::Border::default()
+        };
+        border.radius = theme.surface_radius("tile", 4.0).into();
+        let outline_fallback = border;
+        if theme.outline("tile").is_some() {
+            border.width = 0.0;
+        }
+        let shadow = if outlined {
+            theme.surface_shadow("tile", iced::Shadow::default())
+        } else {
+            iced::Shadow::default()
+        };
+        let ground = if selected {
+            Some(theme.token_colour("row-selected", theme.active).into())
+        } else if pointed {
+            Some(theme.hover.into())
+        } else if outlined {
+            Some(theme.raised.into())
+        } else {
+            None
+        };
+        let body = container(content)
+            .padding(Padding {
+                top: 7.0,
+                ..Padding::ZERO
+            })
+            .width(Length::Fill)
+            .height(height)
+            .clip(true)
+            .style(move |_| container::Style {
+                background: ground,
+                border,
+                shadow,
+                ..Default::default()
+            });
+        let body = crate::theme_art::outlined(
+            body,
+            self.cx,
+            yapfast_core::themes::layout::BorderPlace::Tile,
+            "tile",
+            4.0,
+            outline_fallback.width,
+            outline_fallback.color,
+        );
+        let body = crate::theme_effects::foil(
+            body,
+            self.cx,
+            yapfast_core::themes::package::art::FoilSurface::Tile,
+        );
+        let id = look.id.clone();
+        let menu_id = look.id.clone();
+        let origin = self.member_list_origin();
+        let area = mouse_area(body)
+            .interaction(iced::mouse::Interaction::Pointer)
+            .on_enter(Message::Members(Event::Point(id.clone(), true)))
+            .on_exit(Message::Members(Event::Point(id.clone(), false)))
+            .on_press(Message::Members(Event::Open(id)));
+        RightPress::new(area, move |at| {
+            Message::PersonMenu(menu_id.clone(), at + origin)
+        })
+        .into()
     }
 
     /// A group's heading: 14 px medium in the channel grey, 20 px above,
     /// its role's icon before it.
     fn heading_row(self, heading: &str, icon: Option<&str>) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let (role, count) = yapfast_core::themes::chrome::split_group(heading);
+        let heading = self.cx.themes.label(
+            &theme.id,
+            yapfast_core::themes::chrome::Label::MembersGroup,
+            heading,
+            &[("role", role), ("n", count)],
+        );
+        let headers = self
+            .cx
+            .themes
+            .member_rows(&theme.id)
+            .map(|rows| &rows.headers);
+        let heading =
+            headers
+                .filter(|headers| !headers.text.is_empty())
+                .map_or(heading, |headers| {
+                    yapfast_core::themes::chrome::fill(
+                        &headers.text,
+                        &[("role", role), ("n", count)],
+                    )
+                });
+        let heading = crate::themes::list_case(headers.and_then(|headers| headers.case), &heading);
+        let heading = theme.surface_words("label", &heading).into_owned();
+        let ink = headers
+            .and_then(|headers| headers.colour)
+            .map(crate::themes::argb)
+            .or_else(|| theme.surface_text("label"))
+            .unwrap_or_else(|| hex(HEADING));
         let mut line = row![].spacing(8).align_y(Alignment::Center);
         if let Some(icon) = icon.and_then(|icon| self.cx.picture(icon, 20, 20, false)) {
             line = line.push(Pic::square(icon, 20.0));
         }
-        line = line.push(
-            text(heading.to_owned())
-                .size(14)
-                .font(MEDIUM)
-                .color(hex(HEADING)),
-        );
-        container(line)
+        let size = headers
+            .and_then(|headers| headers.size)
+            .unwrap_or_else(|| theme.type_size("labels", 14.0));
+        line = line.push(crate::theme_effects::label(
+            self.cx,
+            yapfast_core::themes::package::art::TextRole::Labels,
+            heading,
+            size,
+            theme.font("labels", MEDIUM),
+            ink,
+        ));
+        let border = theme.surface_border("label", 0.0, 0.0, Color::TRANSPARENT);
+        let shadow = theme.surface_shadow("label", iced::Shadow::default());
+        let surface = yapfast_core::themes::package::art::ArtSurface::Label;
+        let decorated = self.cx.themes.decorates(&theme.id, surface);
+        let background = (!decorated)
+            .then(|| theme.surface_ground("label"))
+            .flatten();
+        let height = headers
+            .and_then(|headers| headers.height)
+            .unwrap_or_else(|| row_height(self.cx.look.theme));
+        let body: Element<'a, Message> = container(line)
             .padding(Padding {
                 top: 20.0,
                 right: 0.0,
                 bottom: 4.0,
-                left: 8.0,
+                left: headers.and_then(|headers| headers.inset).unwrap_or(8.0),
             })
-            .height(ROW)
+            .height(height)
             .align_y(Alignment::Center)
-            .into()
+            .style(move |_| container::Style {
+                background,
+                border,
+                shadow,
+                ..Default::default()
+            })
+            .into();
+        let body = match headers.and_then(|headers| headers.frame.as_ref()) {
+            Some(frame) => match crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Members,
+                frame,
+                width(self.cx.layout, theme),
+                height,
+            ) {
+                Some(art) => stack![art, body].width(Length::Fill).height(height).into(),
+                None => body,
+            },
+            None => body,
+        };
+        crate::theme_art::surface(body, self.cx, surface)
     }
 
     /// A member's row: the face with its decoration (playing while pointed
@@ -624,6 +1329,7 @@ impl<'a> View<'a> {
     /// timeout's clock, the activity line, and the nameplate behind it all.
     fn member_row(self, look: &'a MemberLook) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
+        let themed = self.cx.themes.member_rows(&theme.id);
         let pointed = self.cx.pointed.member.as_ref() == Some(&look.id);
         // The member whose card is open.
         let selected = self
@@ -634,20 +1340,131 @@ impl<'a> View<'a> {
             .is_some_and(|card| card.user == look.id);
         let offline = look.offline();
         let (avatar_opacity, opacity) = if offline { (0.4, 0.5) } else { (1.0, 1.0) };
-        let face = Face::new(look.avatar.as_deref(), &look.name, 32.0)
-            .opacity(avatar_opacity)
-            .decoration(look.decoration.as_deref(), pointed)
+        let avatar_size = themed.and_then(|rows| rows.avatar.size).unwrap_or(32.0);
+        let face_size = avatar_size.max(1.0);
+        let status_style = themed.and_then(|rows| rows.status);
+        let show_presence_dot = status_style.is_none()
+            || status_style == Some(yapfast_core::themes::lists::StatusStyle::Dot);
+        let avatar_frame =
+            themed.and_then(|rows| crate::theme_art::picked_tile(&rows.avatar.frame, &look.id));
+        let dot_size = themed.and_then(|rows| rows.avatar.dot);
+        let dot_out = themed.and_then(|rows| rows.avatar.dot_out).unwrap_or(0.0);
+        let dot_ring = themed
+            .and_then(|rows| rows.avatar.dot_ring)
+            .unwrap_or_else(|| rgb(theme.sidebar));
+        let presence_name = match look.presence.unwrap_or(Presence::Offline) {
+            Presence::Online => "online",
+            Presence::Mobile => "mobile",
+            Presence::Idle => "idle",
+            Presence::DoNotDisturb => "dnd",
+            Presence::Offline => "offline",
+        };
+        let ring = themed
+            .and_then(|rows| rows.avatar.ring.as_ref())
+            .filter(|ring| ring.presences.iter().any(|shown| shown == presence_name))
+            .map(|ring| (ring.colour, ring.width, ring.glow));
+        let shown_dot_size = dot_size.unwrap_or(16.0);
+        let face = Face::new(look.avatar.as_deref(), &look.name, face_size)
+            .opacity(if avatar_size == 0.0 {
+                0.0
+            } else {
+                avatar_opacity
+            })
+            .decoration(
+                (avatar_size > 0.0 && show_presence_dot)
+                    .then_some(look.decoration.as_deref())
+                    .flatten(),
+                pointed,
+            )
             .dot(
-                look.presence
-                    .filter(|presence| *presence != Presence::Offline)
-                    .map(|presence| (presence, rgb(theme.sidebar), Point::new(20.0, 20.0))),
-            );
-        let color = faded(look.color.map_or(theme.secondary, hex), opacity);
-        let name = self.cx.person_name(
+                (avatar_size > 0.0)
+                    .then(|| {
+                        look.presence
+                            .filter(|presence| *presence != Presence::Offline)
+                            .map(|presence| {
+                                (
+                                    presence,
+                                    dot_ring,
+                                    Point::new(
+                                        face_size - shown_dot_size + dot_out,
+                                        face_size - shown_dot_size + dot_out,
+                                    ),
+                                )
+                            })
+                    })
+                    .flatten(),
+            )
+            .dot_size(dot_size)
+            .ring(ring)
+            .frame(avatar_frame);
+        let stock_color = faded(look.color.map_or(theme.secondary, hex), opacity);
+        let color = themed
+            .and_then(|rows| rows.name_ink)
+            .map(crate::themes::argb)
+            .map_or(stock_color, |colour| faded(colour, opacity));
+        let marked = self.cx.themes.marked(
+            &theme.id,
+            yapfast_core::themes::chrome::Place::Member,
             &look.name,
-            NameInk::new(16.0, 500, color).style(look.style.as_ref()),
+        );
+        let marked = crate::themes::list_case(themed.and_then(|rows| rows.case), &marked);
+        let name = self.cx.person_name(
+            marked.into_owned(),
+            NameInk::new(
+                themed
+                    .and_then(|rows| rows.size)
+                    .unwrap_or_else(|| theme.type_size("names", 16.0)),
+                themed.and_then(|rows| rows.weight).unwrap_or(500.0).round() as u16,
+                color,
+            )
+            .style(look.style.as_ref())
+            .key(&look.id),
         );
         let mut name_line = row![name].spacing(4).align_y(Alignment::Center);
+        if let Some(presence) = look.presence
+            && matches!(
+                status_style,
+                Some(yapfast_core::themes::lists::StatusStyle::Glyph)
+                    | Some(yapfast_core::themes::lists::StatusStyle::Text)
+            )
+        {
+            let (index, words) = match presence {
+                Presence::Online => (0, "online"),
+                Presence::Mobile => (0, "mobile"),
+                Presence::Idle => (1, "idle"),
+                Presence::DoNotDisturb => (2, "dnd"),
+                Presence::Offline => (3, "offline"),
+            };
+            let glyph = themed.and_then(|rows| rows.status_glyphs[index].as_ref());
+            if status_style == Some(yapfast_core::themes::lists::StatusStyle::Glyph)
+                && let Some(yapfast_core::themes::lists::Glyph::Art(art)) = glyph
+                && let Some(art) = crate::theme_art::tile_art(
+                    self.cx,
+                    yapfast_core::themes::package::art::ArtSurface::Members,
+                    art,
+                    12.0,
+                    12.0,
+                )
+            {
+                name_line = name_line.push(art);
+            } else {
+                let shown = if status_style == Some(yapfast_core::themes::lists::StatusStyle::Glyph)
+                {
+                    match glyph {
+                        Some(yapfast_core::themes::lists::Glyph::Text(words)) => words.as_str(),
+                        _ => words,
+                    }
+                } else {
+                    words
+                };
+                name_line = name_line.push(
+                    text(shown.to_owned())
+                        .size(theme.type_size("small", 10.0))
+                        .font(theme.font("small", REGULAR))
+                        .color(theme.muted),
+                );
+            }
+        }
         if let Some(icon) = look
             .role_icon
             .as_deref()
@@ -660,8 +1477,8 @@ impl<'a> View<'a> {
                 letters,
                 badge.as_deref(),
                 Chip {
-                    size: 12.0,
-                    font: SEMIBOLD,
+                    size: theme.type_size("small", 12.0),
+                    font: theme.font("small", SEMIBOLD),
                     height: 16.0,
                     pad: 4.0,
                     radius: 4.0,
@@ -675,7 +1492,8 @@ impl<'a> View<'a> {
             name_line = name_line.push(self.cx.bot_tag(opacity));
         }
         if look.owner {
-            let crown = self.cx.look.icon(Icon::Crown, 14, CROWN);
+            let crown_ink = themed.and_then(|rows| rows.crown_ink).unwrap_or(CROWN);
+            let crown = self.cx.look.icon(Icon::Crown, 14, crown_ink);
             name_line = name_line.push(Pic::square(crown, 14.0).opacity(opacity));
         }
         if let Some(boosting) = &look.boosting
@@ -695,40 +1513,126 @@ impl<'a> View<'a> {
             name_line = name_line.push(self.cx.look.glyph(Icon::Clock, 14, theme.danger));
         }
         let mut person = Person::new(face, name_line);
-        if !look.status.is_empty() {
+        person.gap = themed
+            .and_then(|rows| rows.avatar.gap)
+            .unwrap_or(person.gap);
+        if avatar_size == 0.0 {
+            person.gap = 0.0;
+        }
+        if !look.status.is_empty()
+            && themed.and_then(|rows| rows.sub) != Some(yapfast_core::themes::lists::SubLine::None)
+        {
             person = person.sub(self.cx.status_line(
                 &look.status,
                 StatusInk::under_name(self.cx.look.theme, opacity),
             ));
         }
-        let plate = look
-            .nameplate
-            .as_ref()
-            .and_then(|(url, _)| nameplate(self.cx, url, ROW, pointed, selected, opacity));
-        let content = self
-            .cx
-            .person(person)
-            .width(Length::Fill)
+        let plate = look.nameplate.as_ref().and_then(|(url, _)| {
+            nameplate(
+                self.cx,
+                url,
+                row_height(self.cx.look.theme),
+                pointed,
+                selected,
+                opacity,
+            )
+        });
+        let (left, right) = themed.and_then(|rows| rows.inset).unwrap_or((8.0, 8.0));
+        let mut person = self.cx.person(person).width(Length::Fill);
+        if let Some(rows) = themed {
+            let activity = look.status.words.as_str();
+            let meta = match look.status.icon {
+                1 => rows.meta.playing.as_deref(),
+                2 => rows.meta.listening.as_deref(),
+                3 => rows.meta.watching.as_deref(),
+                4 => rows.meta.streaming.as_deref(),
+                _ => match look.presence.unwrap_or(Presence::Offline) {
+                    Presence::Online | Presence::Mobile => rows.meta.online.as_deref(),
+                    Presence::Idle => rows.meta.idle.as_deref(),
+                    Presence::DoNotDisturb => rows.meta.dnd.as_deref(),
+                    Presence::Offline => rows.meta.offline.as_deref(),
+                },
+            };
+            if let Some(meta) = meta {
+                let words = yapfast_core::themes::chrome::fill(
+                    meta,
+                    &[("activity", activity), ("status", activity)],
+                );
+                let mut words = text(words)
+                    .size(
+                        rows.meta
+                            .size
+                            .unwrap_or_else(|| theme.type_size("small", 11.0)),
+                    )
+                    .font(theme.font("small", crate::fonts::REGULAR))
+                    .color(
+                        rows.meta
+                            .colour
+                            .map(crate::themes::argb)
+                            .unwrap_or(theme.muted),
+                    )
+                    .wrapping(text::Wrapping::None);
+                if rows.meta.max_width > 0.0 {
+                    words = words.width(rows.meta.max_width);
+                }
+                person = person.push(words);
+            }
+            if let Some(badge) = &rows.badge
+                && (!badge.online_only || !offline)
+            {
+                let online = self
+                    .s
+                    .lines
+                    .iter()
+                    .filter_map(|line| match line {
+                        MemberLine::Member(member) if !member.offline() => Some(member),
+                        _ => None,
+                    })
+                    .position(|member| member.id == look.id)
+                    .map_or(0, |place| place + 1)
+                    .to_string();
+                let words =
+                    yapfast_core::themes::chrome::fill(&badge.text, &[("online", online.as_str())]);
+                let ground = crate::themes::argb(badge.ground);
+                person = person.push(
+                    container(
+                        text(words)
+                            .size(theme.type_size("small", 10.0))
+                            .font(theme.font("small", MEDIUM))
+                            .color(crate::themes::argb(badge.ink)),
+                    )
+                    .padding([2, 4])
+                    .style(move |_| rounded(ground, 4)),
+                );
+            }
+        }
+        let content = person
             .padding(Padding {
                 top: 0.0,
-                right: if look.nameplate.is_some() { 12.0 } else { 8.0 },
+                right: if plate.is_some() {
+                    right.max(12.0)
+                } else {
+                    right
+                },
                 bottom: 0.0,
-                left: 8.0,
+                left,
             })
-            .height(ROW);
+            .height(row_height(self.cx.look.theme));
         // The ground the nameplate fades into.
         let ground = if selected {
-            theme.active
+            theme.token_colour("row-selected", theme.active)
         } else if pointed {
             theme.hover
         } else {
             theme.sidebar
         };
-        let palette = look
-            .nameplate
-            .as_ref()
-            .and_then(|(_, palette)| *palette)
-            .map(hex);
+        let palette = themed_nameplate_palette(
+            self.cx,
+            look.nameplate
+                .as_ref()
+                .and_then(|(_, palette)| *palette)
+                .map(hex),
+        );
         let plated = PlateRow::new(
             content,
             plate,
@@ -741,21 +1645,87 @@ impl<'a> View<'a> {
         let menu_id = look.id.clone();
         let open_id = look.id.clone();
         let origin = self.member_list_origin();
-        let area = mouse_area(
-            container(plated)
+        let area = mouse_area({
+            let mut border = theme.surface_border("row", 8.0, 0.0, Color::TRANSPARENT);
+            border.radius = theme.row_radius(8.0).into();
+            let shadow = theme.surface_shadow("row", iced::Shadow::default());
+            let row_height = row_height(self.cx.look.theme);
+            let frame = themed.and_then(|rows| {
+                if selected {
+                    rows.selected_frame.as_ref()
+                } else {
+                    None
+                }
+                .or_else(|| crate::theme_art::picked_tile(&rows.frame, &look.id))
+            });
+            let selected_surface = yapfast_core::themes::package::art::ArtSurface::RowSelected;
+            let selected_decorated = selected
+                && frame.is_none()
+                && self.cx.themes.decorates(&theme.id, selected_surface);
+            let body: Element<'a, Message> = container(plated)
                 .width(Length::Fill)
-                .height(ROW)
+                .height(row_height)
                 .clip(true)
                 .style(move |_| container::Style {
                     background: if selected {
-                        Some(MEMBER_OPEN.into())
+                        frame.is_none().then(|| {
+                            if selected_decorated {
+                                Color::TRANSPARENT
+                            } else {
+                                theme.token_colour("row-selected", MEMBER_OPEN)
+                            }
+                            .into()
+                        })
                     } else {
                         pointed.then(|| MEMBER_HOVER.into())
                     },
-                    border: crate::style::round(8),
+                    border,
+                    shadow,
                     ..Default::default()
-                }),
-        )
+                })
+                .into();
+            let mut body = iced::widget::stack![body]
+                .width(Length::Fill)
+                .height(row_height);
+            if let Some(frame) = frame
+                && let Some(art) = crate::theme_art::tile_art_opacity(
+                    self.cx,
+                    yapfast_core::themes::package::art::ArtSurface::Members,
+                    frame,
+                    width(self.cx.layout, theme),
+                    row_height,
+                    if pointed && !selected {
+                        themed
+                            .and_then(|rows| rows.hover_frame_opacity)
+                            .unwrap_or(1.0)
+                    } else {
+                        1.0
+                    },
+                )
+            {
+                body = iced::widget::stack![art, body]
+                    .width(Length::Fill)
+                    .height(row_height);
+            }
+            if selected
+                && let Some(over) = themed.and_then(|rows| rows.selected_over.as_ref())
+                && let Some(art) = crate::theme_art::tile_art(
+                    self.cx,
+                    yapfast_core::themes::package::art::ArtSurface::Members,
+                    over,
+                    width(self.cx.layout, theme),
+                    row_height,
+                )
+            {
+                body = body.push(art);
+            }
+            let body: Element<'a, Message> = body.into();
+            if selected && frame.is_none() {
+                crate::theme_art::surface(body, self.cx, selected_surface)
+            } else {
+                body
+            }
+        })
         .interaction(iced::mouse::Interaction::Pointer)
         .on_enter(Message::Members(Event::Point(id.clone(), true)))
         .on_exit(Message::Members(Event::Point(id, false)))
@@ -769,10 +1739,39 @@ impl<'a> View<'a> {
     /// Where the member list's rows start in the window, which a right
     /// click's point is taken from.
     fn member_list_origin(self) -> Vector {
+        let package = self.cx.themes.package_layout(&self.cx.look.theme.id);
+        let left = if package.and_then(|layout| layout.members)
+            == Some(yapfast_core::themes::layout::MembersSide::Left)
+        {
+            crate::conversation::navigation_left_ctx(self.cx)
+        } else {
+            self.cx.look.window.width
+                - width(self.cx.layout, self.cx.look.theme)
+                - if crate::conversation::navigation_right(package) {
+                    crate::conversation::themed_navigation(
+                        self.cx.layout,
+                        self.cx.look.theme,
+                        package,
+                        self.cx.themes.chrome(&self.cx.look.theme.id),
+                    )
+                } else {
+                    0.0
+                }
+        };
+        let activity = if self
+            .cx
+            .themes
+            .member_rows(&self.cx.look.theme.id)
+            .is_some_and(|rows| !rows.activity)
+        {
+            0.0
+        } else {
+            self.s.activity_height(self.cx.state, true)
+        };
         Vector::new(
-            self.cx.look.window.width - width(self.cx.layout) + 1.0,
+            left + 1.0,
             // Drawn only while the list shows.
-            header::HEIGHT + 1.0 + self.s.activity_height(self.cx.state, true),
+            header::HEIGHT + 1.0 + activity,
         )
     }
 
@@ -789,8 +1788,8 @@ impl<'a> View<'a> {
         let opens = self.s.activity_cards.len() > FIRST_CARDS || hidden;
         let mut head = row![
             text(format!("Activity \u{2014} {}", self.s.activity_cards.len()))
-                .size(14)
-                .font(MEDIUM)
+                .size(theme.type_size("labels", 14.0))
+                .font(theme.font("labels", MEDIUM))
                 .color(theme.muted)
                 .width(Length::Fill),
         ]
@@ -854,7 +1853,8 @@ impl<'a> View<'a> {
         }
         when = when.push(
             text(card.since.as_str())
-                .size(12)
+                .size(theme.type_size("small", 12.0))
+                .font(theme.font("small", REGULAR))
                 .color(tone)
                 .wrapping(text::Wrapping::None),
         );
@@ -862,8 +1862,8 @@ impl<'a> View<'a> {
             self.cx
                 .avatar(card.avatar.as_deref(), &card.name, 16.0, 8.0, 1.0),
             crate::elide::elide(card.name.as_str())
-                .size(14)
-                .font(MEDIUM)
+                .size(theme.type_size("names", 14.0))
+                .font(theme.font("names", MEDIUM))
                 .color(theme.secondary),
         ]
         .spacing(6)
@@ -871,8 +1871,8 @@ impl<'a> View<'a> {
         let words = column![
             who,
             crate::elide::elide(card.game.as_str())
-                .size(14)
-                .font(SEMIBOLD)
+                .size(theme.type_size("body", 14.0))
+                .font(theme.font("body", SEMIBOLD))
                 .color(theme.text),
             when,
         ]
@@ -908,7 +1908,10 @@ impl<'a> View<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{finished_ago, running_for};
+    use iced::Color;
+    use yapfast_core::themes::content::Nameplates;
+
+    use super::{finished_ago, policy_palette, running_for, show_nameplate};
 
     #[test]
     fn the_activity_panels_times_read_in_discords_steps() {
@@ -926,5 +1929,26 @@ mod tests {
         assert_eq!(since(25), "for 25 min");
         assert_eq!(since(130), "for 2 hr");
         assert_eq!(since(3 * 1440), "for 3 d");
+    }
+
+    #[test]
+    fn owner_nameplate_policy_hides_or_tints_without_changing_keep() {
+        let palette = Color::from_rgb(0.1, 0.2, 0.3);
+        let accent = Color::from_rgb(0.8, 0.4, 0.2);
+        assert!(show_nameplate(Nameplates::Keep, false));
+        assert!(!show_nameplate(Nameplates::Keep, true));
+        assert!(!show_nameplate(Nameplates::Hide, false));
+        assert_eq!(
+            policy_palette(Nameplates::Keep, Some(palette), accent),
+            Some(palette)
+        );
+        assert_eq!(
+            policy_palette(Nameplates::Tint, Some(palette), accent),
+            Some(accent)
+        );
+        assert_eq!(
+            policy_palette(Nameplates::Hide, Some(palette), accent),
+            None
+        );
     }
 }

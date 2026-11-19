@@ -187,7 +187,7 @@ fn a_dms_call_buttons_do_nothing_while_a_call_cant_be_joined() {
     let starts = |app: &mut crate::app::App| {
         let mut ui =
             iced_test::Simulator::with_size(iced::Settings::default(), app.shell.frame, app.view());
-        let left = crate::rail::WIDTH + crate::sidebar::width(&app.layout);
+        let left = crate::rail::WIDTH + crate::sidebar::width(&app.layout, &app.theme);
         let mut rows = Vec::new();
         let _ = ui.find(|candidate: iced_test::selector::Candidate<'_>| {
             if let iced_test::selector::Candidate::Text {

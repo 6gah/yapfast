@@ -16,7 +16,7 @@ use crate::{
     style::rounded,
 };
 
-use super::{DM_ROW, Event, Room};
+use super::{Event, Room};
 
 impl<'a> super::View<'a> {
     /// A DM's row: the person's face with its decoration and presence, the
@@ -46,10 +46,19 @@ impl<'a> super::View<'a> {
                     Point::new(20.0, 20.0),
                 )
             }));
-        let mut name = row![self.cx.person_name(
+        let marked = self.cx.themes.marked(
+            &theme.id,
+            yapfast_core::themes::chrome::Place::Channel,
             &room.name,
-            NameInk::new(15.0, 500, ink).style(room.style.as_ref()),
-        )]
+        );
+        let mut name = row![
+            self.cx.person_name(
+                marked,
+                NameInk::new(15.0, 500, ink)
+                    .style(room.style.as_ref())
+                    .key(&room.id),
+            )
+        ]
         .spacing(4)
         .align_y(Alignment::Center);
         if let Some((letters, badge)) = &room.tag {
@@ -90,7 +99,8 @@ impl<'a> super::View<'a> {
         } else if room.official && spot.is_none() {
             line = line.push(
                 text("Official Discord Message")
-                    .size(12)
+                    .size(theme.type_size("small", 12.0))
+                    .font(theme.font("small", crate::fonts::REGULAR))
                     .color(theme.muted)
                     .wrapping(text::Wrapping::None),
             );
@@ -113,24 +123,36 @@ impl<'a> super::View<'a> {
         }
         let plated: Element<'a, Message> = match &room.nameplate {
             Some((url, palette)) if pointed || room.selected => {
-                let plate =
-                    crate::members::nameplate(self.cx, url, DM_ROW, pointed, room.selected, 1.0);
-                crate::widgets::PlateRow::new(
-                    face,
-                    plate,
-                    palette.map(crate::style::hex),
-                    row_ground,
-                    crate::members::plate_end(pointed, room.selected),
+                let plate = crate::members::nameplate(
+                    self.cx,
+                    url,
+                    room.row_height(theme),
+                    pointed,
+                    room.selected,
                     1.0,
-                )
-                .into()
+                );
+                match plate {
+                    Some(plate) => crate::widgets::PlateRow::new(
+                        face,
+                        Some(plate),
+                        crate::members::themed_nameplate_palette(
+                            self.cx,
+                            palette.map(crate::style::hex),
+                        ),
+                        row_ground,
+                        crate::members::plate_end(pointed, room.selected),
+                        1.0,
+                    )
+                    .into(),
+                    None => face.into(),
+                }
             }
             _ => face.into(),
         };
         self.row_face(
             room.id.clone(),
             plated,
-            room.row_height(),
+            room.row_height(theme),
             room.selected,
             Some(Message::Side(Event::Select(room.id.clone()))),
             Some(room.id.clone()),
@@ -145,7 +167,10 @@ impl<'a> super::View<'a> {
         container(
             row![
                 self.cx.look.glyph(Icon::Check, 12, theme.on_accent),
-                text("OFFICIAL").size(10).font(BOLD).color(theme.on_accent),
+                text("OFFICIAL")
+                    .size(theme.type_size("labels", 10.0))
+                    .font(theme.font("labels", BOLD))
+                    .color(theme.on_accent),
             ]
             .spacing(2)
             .align_y(Alignment::Center),
@@ -166,7 +191,10 @@ impl<'a> super::View<'a> {
             container(
                 row![
                     self.cx.look.glyph(Icon::Hand, 14, on),
-                    text("Wave").size(12).font(MEDIUM).color(on),
+                    text("Wave")
+                        .size(theme.type_size("body", 12.0))
+                        .font(theme.font("body", MEDIUM))
+                        .color(on),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center),

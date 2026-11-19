@@ -75,7 +75,7 @@ impl<'a> super::View<'a> {
         };
         let height = HEADER + BANNER;
         let mut layers = stack![];
-        let width = super::width(self.cx.layout);
+        let width = super::width(self.cx.layout, self.cx.look.theme);
         if let Some(picture) = self.cx.picture(banner, width as u32, height as u32, true) {
             layers = layers.push(
                 Pic::new(picture, iced::Size::new(width, height))
@@ -153,14 +153,14 @@ impl<'a> super::View<'a> {
             .height(Length::Fill);
         let words = row![
             text("Boost Goal")
-                .size(14)
-                .font(SEMIBOLD)
+                .size(theme.type_size("labels", 14.0))
+                .font(theme.font("labels", SEMIBOLD))
                 .color(theme.text)
                 .wrapping(text::Wrapping::None)
                 .width(Length::Fill),
             text(format!("{boosts}/{BOOST_GOAL} Boosts"))
-                .size(14)
-                .font(MEDIUM)
+                .size(theme.type_size("small", 14.0))
+                .font(theme.font("small", MEDIUM))
                 .color(faded(theme.text, 0.7))
                 .wrapping(text::Wrapping::None),
             self.cx.look.glyph(Icon::ChevronRight, 16, theme.muted),
@@ -205,8 +205,8 @@ impl<'a> super::View<'a> {
             row![
                 self.cx.look.glyph(Icon::Calendar, 20, muted),
                 text(label)
-                    .size(14)
-                    .font(MEDIUM)
+                    .size(theme.type_size("body", 14.0))
+                    .font(theme.font("body", MEDIUM))
                     .color(muted)
                     .wrapping(text::Wrapping::None)
             ]
@@ -257,7 +257,10 @@ impl<'a> super::View<'a> {
         }
         face = face.push(
             row![
-                elide(head.name.as_str()).size(15).font(SEMIBOLD).color(ink),
+                elide(theme.heading(&head.name).into_owned())
+                    .size(theme.header_size(15.0))
+                    .font(theme.header_font(SEMIBOLD))
+                    .color(ink),
                 self.cx.look.glyph(
                     if open {
                         Icon::ChevronUp

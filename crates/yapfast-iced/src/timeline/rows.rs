@@ -339,8 +339,16 @@ impl Edge {
 /// A row's height before it's measured: the lines its text wraps to,
 /// estimated by character count at the timeline's width, its pictures and
 /// reactions, and the space and dividers above it.
-pub fn row_height(message: &ChatMessage, look: &RowLook, width: f32, edge: f32) -> f32 {
-    let text_width = (width - GUTTER - END_PAD).max(100.0);
+pub fn row_height(
+    message: &ChatMessage,
+    look: &RowLook,
+    width: f32,
+    edge: f32,
+    spacing: crate::theme::Spacing,
+) -> f32 {
+    let avatar = spacing.avatar_size.unwrap_or(AVATAR);
+    let gutter = avatar + 2.0 * spacing.chat_padding.unwrap_or((GUTTER - AVATAR) / 2.0);
+    let text_width = (width - gutter - END_PAD).max(100.0);
     let per_line = (text_width / CHAR).floor().max(1.0) as usize;
     let text = look.body.plain();
     let lines: usize = if text.is_empty() {
@@ -401,25 +409,30 @@ pub fn row_height(message: &ChatMessage, look: &RowLook, width: f32, edge: f32) 
         content += THREAD_CHIP;
     }
     if look.first && message.notice.is_none() {
-        content = content.max(if header { 64.0 } else { AVATAR });
+        content = content.max(if header { avatar + 24.0 } else { avatar });
     }
     // Whole pixels, as rows are measured, so rows sit on whole pixels.
-    (top_space(look) + edge + content + CONTENT_PAD * 2.0 + bottom_space(look)).round()
+    (top_space(look, spacing) + edge + content + CONTENT_PAD * 2.0 + bottom_space(look, spacing))
+        .round()
 }
 
 /// The space above a row's message, its dividers' included.
-pub(super) fn top_space(look: &RowLook) -> f32 {
+pub(super) fn top_space(look: &RowLook, spacing: crate::theme::Spacing) -> f32 {
     if look.divided() {
         DIVIDED_GAP + DIVIDER
     } else if look.first {
-        GROUP_GAP
+        spacing.message_group_gap.unwrap_or(GROUP_GAP)
     } else {
-        ROW_GAP
+        spacing.message_gap.unwrap_or(ROW_GAP)
     }
 }
 
-pub(super) fn bottom_space(look: &RowLook) -> f32 {
-    if look.last { TAIL } else { ROW_GAP }
+pub(super) fn bottom_space(look: &RowLook, spacing: crate::theme::Spacing) -> f32 {
+    if look.last {
+        TAIL
+    } else {
+        spacing.message_gap.unwrap_or(ROW_GAP)
+    }
 }
 
 #[cfg(test)]

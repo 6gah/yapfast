@@ -387,7 +387,7 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
         "Settings",
         theme.text,
         24,
-        Some(Message::Settings(crate::settings::Event::Reopen)),
+        Some(crate::app::settings(crate::settings::Event::Reopen)),
     ));
     let ground = theme.panel;
     let face: Element<'a, Message> = match open {

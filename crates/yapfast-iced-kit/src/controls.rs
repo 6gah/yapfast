@@ -107,6 +107,10 @@ pub fn action<'a, M: Clone + 'a>(
             ring: None,
         },
         accent: theme.accent,
+        radius: theme.surface_radius("button", 6.0),
+        border: theme.surface_border("button", 6.0, 0.0, Color::TRANSPARENT),
+        shadow: theme.surface_shadow("button", Shadow::default()),
+        motion: theme.motion(),
         small: false,
         icon: None,
     }
@@ -120,6 +124,10 @@ pub struct Action<'a, M> {
     height: f32,
     faces: Faces,
     accent: Color,
+    radius: f32,
+    border: Border,
+    shadow: Shadow,
+    motion: crate::theme::Motion,
     small: bool,
     /// An icon before its label, drawn in its ink.
     icon: Option<iced::advanced::image::Handle>,
@@ -159,12 +167,26 @@ impl<M: Clone> Action<'_, M> {
         self.small = true;
         self
     }
+
+    /// Uses another named surface's shape while keeping this action's
+    /// colours and behavior, as buttons embedded in cards do.
+    pub fn surface(mut self, theme: &Theme, surface: &str) -> Self {
+        self.radius = theme.surface_radius(surface, 6.0);
+        self.border = theme.surface_border(surface, 6.0, 0.0, Color::TRANSPARENT);
+        self.shadow = theme.surface_shadow(surface, Shadow::default());
+        self
+    }
 }
 
 impl<'a, M: Clone + 'a> From<Action<'a, M>> for Element<'a, M> {
     fn from(action: Action<'a, M>) -> Self {
+        let enabled = action.message.is_some();
         let faces = action.faces;
-        button(
+        let radius = action.radius;
+        let base_border = action.border;
+        let shadow = action.shadow;
+        let motion = action.motion;
+        let shown: Element<'a, M> = button(
             container({
                 let label = text(action.label)
                     .size(if action.small { 14 } else { 15 })
@@ -193,14 +215,24 @@ impl<'a, M: Clone + 'a> From<Action<'a, M>> for Element<'a, M> {
                 background: Some(faces.ground[lit].into()),
                 text_color: faces.ink[lit],
                 border: Border {
-                    color: faces.ring.unwrap_or(Color::TRANSPARENT),
-                    width: if faces.ring.is_some() { 2.0 } else { 0.0 },
-                    radius: 6.0.into(),
+                    color: faces.ring.unwrap_or(base_border.color),
+                    width: if faces.ring.is_some() {
+                        2.0
+                    } else {
+                        base_border.width
+                    },
+                    radius: radius.into(),
                 },
+                shadow,
                 ..Default::default()
             }
         })
-        .into()
+        .into();
+        if enabled {
+            crate::widgets::motion::interactive(shown, motion, action.accent, radius)
+        } else {
+            shown
+        }
     }
 }
 
@@ -289,9 +321,11 @@ pub fn field_style(
         theme.text,
         theme.muted,
         theme.faint,
-        theme.accent,
-        theme.selection,
+        theme.token_colour("focus-ring", theme.accent),
+        theme.token_colour("selection", theme.selection),
     );
+    let radius = theme.surface_radius("field", 6.0);
+    let idle = theme.surface_border("field", 6.0, 0.0, Color::TRANSPARENT);
     move |_, status| text_input::Style {
         background: ground.into(),
         border: Border {
@@ -299,9 +333,9 @@ pub fn field_style(
             width: if matches!(status, text_input::Status::Focused { .. }) {
                 1.0
             } else {
-                0.0
+                idle.width
             },
-            radius: 6.0.into(),
+            radius: radius.into(),
         },
         icon: ink,
         placeholder: if enabled { hint } else { faint },
@@ -313,20 +347,33 @@ pub fn field_style(
 /// The window's tooltip: 32 px tall, 14 px bold on the theme's tooltip
 /// ground.
 pub fn tip<'a, M: Clone + 'a>(theme: &Theme, label: impl text::IntoFragment<'a>) -> Element<'a, M> {
-    container(text(label).size(14).font(BOLD).color(theme.text))
+    let tip: Element<'a, M> = container(text(label).size(14).font(BOLD).color(theme.text))
         .padding([0, 10])
         .height(32)
         .align_y(Alignment::Center)
         .style(tip_style(theme))
-        .into()
+        .into();
+    themed_outline(
+        tip,
+        theme,
+        "tooltip",
+        Color::TRANSPARENT,
+        1.0,
+        theme.surface_radius("tooltip", 6.0),
+    )
 }
 
 /// A tooltip's ground, round corners and shadow, for one with more in it
 /// than a label (a reaction's).
 pub fn tip_style(theme: &Theme) -> impl Fn(&iced::Theme) -> container::Style + use<> {
-    let ground = theme.tooltip;
-    move |_| container::Style {
-        shadow: Shadow {
+    let ground = theme.surface_paint("tooltip");
+    let mut border = theme.surface_border("tooltip", 6.0, 0.0, Color::TRANSPARENT);
+    if theme.outline("tooltip").is_some() {
+        border.width = 0.0;
+    }
+    let shadow = theme.surface_shadow(
+        "tooltip",
+        Shadow {
             color: Color {
                 a: 0.5,
                 ..Color::BLACK
@@ -334,7 +381,12 @@ pub fn tip_style(theme: &Theme) -> impl Fn(&iced::Theme) -> container::Style + u
             offset: Vector::new(0.0, 3.0),
             blur_radius: 12.0,
         },
-        ..rounded(ground, 6)
+    );
+    move |_| container::Style {
+        background: Some(ground),
+        shadow,
+        border,
+        ..Default::default()
     }
 }
 
@@ -373,7 +425,49 @@ pub fn edged<'a, M: Clone + 'a>(
     edge: Color,
     radius: f32,
 ) -> Element<'a, M> {
-    iced::widget::stack![content.into(), Outline { edge, radius }].into()
+    iced::widget::stack![
+        content.into(),
+        Outline {
+            edge,
+            radius,
+            width: 1.0,
+            dash: None,
+        }
+    ]
+    .into()
+}
+
+/// Draws a package layout outline over a surface. With no declaration it
+/// leaves the surface's normal solid container border alone.
+pub fn themed_outline<'a, M: Clone + 'a>(
+    content: impl Into<Element<'a, M>>,
+    theme: &Theme,
+    place: &str,
+    edge: Color,
+    width: f32,
+    radius: f32,
+) -> Element<'a, M> {
+    let content = content.into();
+    let Some(outline) = theme.outline(place) else {
+        return content;
+    };
+    let width = outline.width.unwrap_or(width).max(1.0);
+    let edge = outline.colour.unwrap_or(edge);
+    let dash = match outline.stroke {
+        crate::theme::OutlineStroke::Solid => None,
+        crate::theme::OutlineStroke::Dashed => Some((outline.dash.max(width), outline.gap, false)),
+        crate::theme::OutlineStroke::Dotted => Some((width, outline.gap, true)),
+    };
+    iced::widget::stack![
+        content,
+        Outline {
+            edge,
+            radius,
+            width,
+            dash,
+        }
+    ]
+    .into()
 }
 
 /// An edge alone, over what it's stacked on: it takes no event and shows
@@ -381,6 +475,8 @@ pub fn edged<'a, M: Clone + 'a>(
 struct Outline {
     edge: Color,
     radius: f32,
+    width: f32,
+    dash: Option<(f32, f32, bool)>,
 }
 
 impl<M> iced::advanced::Widget<M, iced::Theme, iced::Renderer> for Outline {
@@ -408,14 +504,109 @@ impl<M> iced::advanced::Widget<M, iced::Theme, iced::Renderer> for Outline {
         _viewport: &iced::Rectangle,
     ) {
         use iced::advanced::Renderer as _;
+        let bounds = layout.bounds();
+        if let Some((dash, gap, dotted)) = self.dash {
+            let width = self.width;
+            let inset = width / 2.0;
+            outline_dashes(
+                renderer,
+                iced::Point::new(bounds.x + inset, bounds.y),
+                (bounds.width - width).max(0.0),
+                width,
+                dash,
+                gap,
+                true,
+                dotted,
+                self.edge,
+            );
+            outline_dashes(
+                renderer,
+                iced::Point::new(bounds.x + inset, bounds.y + bounds.height - width),
+                (bounds.width - width).max(0.0),
+                width,
+                dash,
+                gap,
+                true,
+                dotted,
+                self.edge,
+            );
+            outline_dashes(
+                renderer,
+                iced::Point::new(bounds.x, bounds.y + inset),
+                (bounds.height - width).max(0.0),
+                width,
+                dash,
+                gap,
+                false,
+                dotted,
+                self.edge,
+            );
+            outline_dashes(
+                renderer,
+                iced::Point::new(bounds.x + bounds.width - width, bounds.y + inset),
+                (bounds.height - width).max(0.0),
+                width,
+                dash,
+                gap,
+                false,
+                dotted,
+                self.edge,
+            );
+            return;
+        }
         renderer.fill_quad(
             iced::advanced::renderer::Quad {
-                bounds: layout.bounds(),
-                border: crate::style::edge(self.edge, self.radius),
+                bounds,
+                border: Border {
+                    color: self.edge,
+                    width: self.width,
+                    radius: self.radius.into(),
+                },
                 ..Default::default()
             },
             Color::TRANSPARENT,
         );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn outline_dashes(
+    renderer: &mut iced::Renderer,
+    start: iced::Point,
+    length: f32,
+    width: f32,
+    dash: f32,
+    gap: f32,
+    horizontal: bool,
+    dotted: bool,
+    colour: Color,
+) {
+    use iced::advanced::Renderer as _;
+    let mut at = 0.0;
+    while at < length {
+        let run = dash.min(length - at);
+        let origin = if horizontal {
+            iced::Point::new(start.x + at, start.y)
+        } else {
+            iced::Point::new(start.x, start.y + at)
+        };
+        let size = if horizontal {
+            iced::Size::new(run, width)
+        } else {
+            iced::Size::new(width, run)
+        };
+        renderer.fill_quad(
+            iced::advanced::renderer::Quad {
+                bounds: iced::Rectangle::new(origin, size),
+                border: Border {
+                    radius: if dotted { width / 2.0 } else { 0.0 }.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            colour,
+        );
+        at += dash + gap.max(0.0);
     }
 }
 
@@ -428,8 +619,29 @@ impl<'a, M: Clone + 'a> From<Outline> for Element<'a, M> {
 /// A menu's panel: the menu's ground in its outline, round corners, the
 /// raised shadow.
 pub fn menu_panel(theme: &Theme) -> impl Fn(&iced::Theme) -> container::Style + use<> {
-    let (ground, edge) = (theme.menu, theme.menu_line);
-    move |_| crate::style::panel(ground, edge, 8.0)
+    menu_panel_over(theme, false)
+}
+
+/// A menu panel whose ground can be left clear for the owner's art/glass
+/// surface renderer. The ordinary form also preserves explicit package
+/// `menu` paint through the companion registry.
+pub fn menu_panel_over(
+    theme: &Theme,
+    transparent: bool,
+) -> impl Fn(&iced::Theme) -> container::Style + use<> {
+    let ground = theme.surface_paint("menu");
+    let edge = theme.menu_line;
+    let mut border = theme.surface_border("menu", 8.0, 1.0, edge);
+    if theme.outline("menu").is_some() {
+        border.width = 0.0;
+    }
+    let shadow = theme.surface_shadow("menu", crate::style::raised_shadow());
+    move |_| container::Style {
+        background: (!transparent).then_some(ground),
+        border,
+        shadow,
+        ..Default::default()
+    }
 }
 
 /// A box of one colour: a line between parts of the window, a bar, a dot.
@@ -777,6 +989,7 @@ impl<'a, M: Clone + 'a> From<IconButton<'a, M>> for Element<'a, M> {
             below,
         } = icon_button;
         let theme = look.theme;
+        let radius = theme.surface_radius("button", radius);
         let enabled = message.is_some();
         let rest_ink = ink.unwrap_or(if enabled || matches!(ground, Ground::Clear) {
             theme.secondary
@@ -827,6 +1040,11 @@ impl<'a, M: Clone + 'a> From<IconButton<'a, M>> for Element<'a, M> {
                 let lit = pressed(face_in(theme.danger), lit_style(Some(red), red, radius));
                 crate::widgets::Hover::new(rest, lit).into()
             }
+        };
+        let shown = if enabled {
+            crate::widgets::motion::interactive(shown, theme.motion(), theme.accent, radius)
+        } else {
+            shown
         };
         if label.is_empty() {
             return shown;
@@ -918,11 +1136,12 @@ pub fn count_pill<'a, M: Clone + 'a>(
     } else {
         pill
     };
-    let pill = pill.style(move |_| rounded(danger, look.height / 2.0));
+    let radius = theme.surface_radius("chip", look.height / 2.0);
+    let pill = pill.style(move |_| rounded(danger, radius));
     match ring {
         Some(ring) => container(pill)
             .padding(3)
-            .style(move |_| rounded(ring, look.height / 2.0 + 3.0))
+            .style(move |_| rounded(ring, radius + 3.0))
             .into(),
         None => pill.into(),
     }
@@ -937,17 +1156,27 @@ pub fn live_pill<'a, M: Clone + 'a>(theme: &Theme, press: Option<M>) -> Element<
         .padding([0, 5])
         .height(16)
         .align_y(Alignment::Center);
+    let border = theme.surface_border("chip", 8.0, 0.0, Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("chip", Shadow::default());
     match press {
         Some(press) => button(face)
             .padding(0)
             .on_press(press)
             .style(move |_, status| button::Style {
                 background: Some(if lights(status) { lit } else { rest }.into()),
-                border: Border::default().rounded(8),
+                border,
+                shadow,
                 ..Default::default()
             })
             .into(),
-        None => face.style(move |_| rounded(rest, 8)).into(),
+        None => face
+            .style(move |_| container::Style {
+                background: Some(rest.into()),
+                border,
+                shadow,
+                ..Default::default()
+            })
+            .into(),
     }
 }
 
@@ -1110,6 +1339,9 @@ pub fn round_button<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let lit = crate::theme::mix(fill, theme.overlay, 0.9);
     let enabled = message.is_some();
+    let radius = theme.surface_radius("button", ROUND / 2.0);
+    let border = theme.surface_border("button", ROUND / 2.0, 0.0, Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("button", Shadow::default());
     let face = button(face.boxed(ROUND))
         .padding(0)
         .width(ROUND)
@@ -1117,7 +1349,11 @@ pub fn round_button<'a, M: Clone + 'a>(
         .on_press_maybe(message)
         .style(move |_, status| button::Style {
             background: Some(if enabled && lights(status) { lit } else { fill }.into()),
-            border: Border::default().rounded(ROUND / 2.0),
+            border: Border {
+                radius: radius.into(),
+                ..border
+            },
+            shadow,
             ..Default::default()
         });
     iced::widget::tooltip(
@@ -1144,6 +1380,9 @@ pub fn call_button<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let lit = crate::theme::mix(fill, Color::BLACK, 0.85);
     let opacity = if message.is_some() { 1.0 } else { 0.5 };
+    let radius = theme.surface_radius("button", 24.0);
+    let border = theme.surface_border("button", 24.0, 0.0, Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("button", Shadow::default());
     let pill = button(face.boxed(Length::Fill))
         .padding(0)
         .width(64)
@@ -1153,7 +1392,11 @@ pub fn call_button<'a, M: Clone + 'a>(
             background: Some(
                 crate::style::faded(if lights(status) { lit } else { fill }, opacity).into(),
             ),
-            border: Border::default().rounded(24),
+            border: Border {
+                radius: radius.into(),
+                ..border
+            },
+            shadow,
             ..Default::default()
         });
     column![
@@ -1186,6 +1429,9 @@ pub fn dock_button<'a, M: Clone + 'a>(
         (theme.raised, theme.hover)
     };
     let enabled = message.is_some();
+    let radius = theme.surface_radius("button", 8.0);
+    let border = theme.surface_border("button", 8.0, 0.0, Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("button", Shadow::default());
     let face = button(face.boxed(Length::Fill))
         .padding(0)
         .width(Length::Fill)
@@ -1193,7 +1439,11 @@ pub fn dock_button<'a, M: Clone + 'a>(
         .on_press_maybe(message)
         .style(move |_, status| button::Style {
             background: Some(if enabled && lights(status) { lit } else { rest }.into()),
-            border: Border::default().rounded(8),
+            border: Border {
+                radius: radius.into(),
+                ..border
+            },
+            shadow,
             ..Default::default()
         });
     iced::widget::tooltip(

@@ -80,6 +80,57 @@ fn title<'a>(words: &'a str, ink: Color) -> Element<'a, Message> {
     text(words).size(12).font(BOLD).color(ink).into()
 }
 
+/// A stock profile section is only its title and content. An installed
+/// theme that names `card_section` gives it a frame and a 22 px title bar,
+/// as the owner theme's `SectionBox` did.
+fn section_box<'a>(
+    theme: &crate::theme::Theme,
+    words: &'a str,
+    content: Element<'a, Message>,
+    ink: Color,
+    stock_title: bool,
+) -> Element<'a, Message> {
+    if !theme.has_surface("card_section") {
+        let mut section = column![].spacing(6);
+        if stock_title {
+            section = section.push(title(words, ink));
+        }
+        return section.push(content).into();
+    }
+
+    let words = theme.surface_words("card_section", words);
+    let (bar, bar_ink) = theme
+        .surface_bar("card_section")
+        .map_or((Color::TRANSPARENT.into(), ink), |(bar, text)| {
+            (bar, text.unwrap_or(ink))
+        });
+    let heading = container(
+        text(words)
+            .size(12)
+            .font(BOLD)
+            .color(bar_ink)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([0, 8])
+    .height(22)
+    .align_y(Alignment::Center)
+    .style(move |_| container::Style {
+        background: Some(bar),
+        ..Default::default()
+    });
+    let background = theme.surface_ground("card_section");
+    let border = theme.surface_border("card_section", 0.0, 0.0, Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("card_section", iced::Shadow::default());
+    container(column![heading, container(content).padding(8)].spacing(0))
+        .style(move |_| container::Style {
+            background,
+            border,
+            shadow,
+            ..Default::default()
+        })
+        .into()
+}
+
 /// A thought's bubble over a profile's top: two dots, each `(x, y,
 /// side)`, rising from the avatar to `content` at `at`, in the bubble's
 /// inks. A stack is the size of its first child, which lays out the rest:
@@ -167,13 +218,13 @@ pub(super) fn profile_body<'a>(
         body = body.push(bio_view(ctx, bio, &inks, mode));
     }
     if mode.full() && (profile.created.is_some() || profile.joined.is_some()) {
-        body = body.push(
-            column![
-                title("Member Since", inks.ink),
-                member_since(ctx, shown, &inks)
-            ]
-            .spacing(6),
-        );
+        body = body.push(section_box(
+            theme,
+            "Member Since",
+            member_since(ctx, shown, &inks),
+            inks.ink,
+            true,
+        ));
     }
     if mode.large() && !look.friends_since.is_empty() {
         body = body.push(
@@ -185,11 +236,13 @@ pub(super) fn profile_body<'a>(
         );
     }
     if !profile.roles.is_empty() {
-        let mut roles = column![].spacing(6);
-        if mode.full() {
-            roles = roles.push(title("Roles", inks.ink));
-        }
-        body = body.push(roles.push(role_chips(ctx, shown, &inks)));
+        body = body.push(section_box(
+            theme,
+            "Roles",
+            role_chips(ctx, shown, &inks),
+            inks.ink,
+            mode.full(),
+        ));
     }
     if mode.large() && !profile.connections.is_empty() {
         body = body.push(connections(ctx, shown, &inks));
@@ -216,15 +269,24 @@ pub(super) fn profile_body<'a>(
     if mode != Mode::Side && !look.message_hint.is_empty() {
         body = body.push(message_box(ctx, shown, &inks));
     }
-    let content =
-        column![profile_top(ctx, shown, mode, width, pointed, &inks), body].padding(Padding {
-            bottom: metrics.pad,
-            ..Padding::ZERO
-        });
+    let inset_top = (!inks.themed && mode != Mode::Docked)
+        .then(|| theme.surface_inset_top("card"))
+        .flatten()
+        .unwrap_or(0.0);
+    let content = column![
+        Space::new().height(inset_top),
+        profile_top(ctx, shown, mode, width, pointed, &inks),
+        body
+    ]
+    .spacing(0)
+    .padding(Padding {
+        bottom: metrics.pad,
+        ..Padding::ZERO
+    });
     match mode {
         Mode::Card => container(content)
             .width(WIDTH)
-            .style(frame_style(inks, theme.edge, 12.0, true))
+            .style(frame_style(inks, theme, theme.edge, 12.0, true))
             .into(),
         Mode::Side | Mode::Docked => content.into(),
     }
@@ -837,7 +899,7 @@ fn badge_level_tip<'a>(
     let ground = theme.tooltip;
     container(card.push(words))
         .width(BADGE_TIP_WIDTH)
-        .style(move |_| crate::style::panel(ground, BADGE_TIP_EDGE, 8.0))
+        .style(move |_| crate::style::surface_panel(theme, "tooltip", ground, BADGE_TIP_EDGE, 8.0))
         .into()
 }
 

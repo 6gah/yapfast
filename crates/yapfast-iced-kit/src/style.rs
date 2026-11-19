@@ -162,6 +162,22 @@ pub fn panel(ground: Color, edge: Color, radius: f32) -> container::Style {
     }
 }
 
+/// [`panel`] through an installed theme's named surface tokens.
+pub fn surface_panel(
+    theme: &Theme,
+    surface: &str,
+    ground: Color,
+    edge: Color,
+    radius: f32,
+) -> container::Style {
+    container::Style {
+        background: Some(ground.into()),
+        border: theme.surface_border(surface, radius, 1.0, edge),
+        shadow: theme.surface_shadow(surface, raised_shadow()),
+        ..Default::default()
+    }
+}
+
 /// The shadow of a bar floating over the timeline: Jump to present, the
 /// unread bar.
 pub fn bar_shadow() -> iced::Shadow {
@@ -186,7 +202,18 @@ pub fn hover_bar_shadow() -> iced::Shadow {
 pub fn scrollbar(
     theme: &Theme,
 ) -> impl Fn(&iced::Theme, scrollable::Status) -> scrollable::Style + use<> {
+    // iced fixes the default vertical scroller's layout width at 10 px. A
+    // theme's narrower owner width is therefore drawn as a transparent inset
+    // while the stock hit area stays intact. The package format caps both
+    // widths at 10 px, so this never needs to grow outside iced's laid-out
+    // scroller. Wired's few horizontal scrollers explicitly use a 4 px layout;
+    // leave their geometry alone because a style callback cannot inspect it.
+    const SCROLLER_WIDTH: f32 = 10.0;
     let dark = theme.dark;
+    let radius = theme.surface_radius("scrollbar", 4.0);
+    let (width, hover_width) = theme.surface_widths("scrollbar");
+    let package_scroller = theme.package_paint("scrollbar");
+    let package_track = theme.package_paint("scrollbar-track");
     move |iced_theme, status| {
         let mut style = scrollable::default(iced_theme, status);
         let pointed = matches!(
@@ -202,12 +229,85 @@ pub fn scrollbar(
             (false, false) => Color::from_rgba8(0, 0, 0, 0x73 as f32 / 255.0),
             (false, true) => Color::from_rgba8(0, 0, 0, 0x99 as f32 / 255.0),
         };
-        for rail in [&mut style.vertical_rail, &mut style.horizontal_rail] {
-            rail.background = None;
+        let inset = (SCROLLER_WIDTH
+            - if pointed { hover_width } else { width }
+                .unwrap_or(SCROLLER_WIDTH)
+                .clamp(0.0, SCROLLER_WIDTH))
+            / 2.0;
+        for (rail, inset) in [
+            (&mut style.vertical_rail, inset),
+            (&mut style.horizontal_rail, 0.0),
+        ] {
+            rail.background = pointed.then_some(package_track).flatten();
             rail.border = Border::default();
-            rail.scroller.background = scroller.into();
-            rail.scroller.border = Border::default().rounded(4);
+            rail.scroller.background = package_scroller.unwrap_or_else(|| scroller.into());
+            rail.scroller.border = Border {
+                color: Color::TRANSPARENT,
+                width: inset,
+                // The transparent border consumes `inset` from each edge;
+                // adding it here leaves the visible thumb at `radius`.
+                radius: (radius + inset).into(),
+            };
         }
         style
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use iced::{Background, Color};
+
+    use super::*;
+    use crate::theme::{Metrics, Shape};
+
+    #[test]
+    fn an_owner_scrollbar_uses_its_paints_and_rest_and_hover_widths() {
+        let theme = Theme::new("kit-scrollbar-owner", true).worked_out();
+        let scroller = Background::Color(Color::from_rgb8(0x12, 0x34, 0x56));
+        let track = Background::Color(Color::from_rgb8(0x65, 0x43, 0x21));
+        theme.register_metrics(Metrics {
+            paints: HashMap::from([
+                ("scrollbar".to_owned(), scroller),
+                ("scrollbar-track".to_owned(), track),
+            ]),
+            shapes: HashMap::from([(
+                "scrollbar".to_owned(),
+                Shape {
+                    radius: Some(2.0),
+                    width: Some(4.0),
+                    hover_width: Some(8.0),
+                    ..Shape::default()
+                },
+            )]),
+            ..Metrics::default()
+        });
+
+        let iced = iced::Theme::Dark;
+        let style = scrollbar(&theme);
+        let rest = style(
+            &iced,
+            scrollable::Status::Active {
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            },
+        );
+        assert_eq!(rest.vertical_rail.background, None);
+        assert_eq!(rest.vertical_rail.scroller.background, scroller);
+        assert_eq!(rest.vertical_rail.scroller.border.width, 3.0);
+
+        let hover = style(
+            &iced,
+            scrollable::Status::Hovered {
+                is_horizontal_scrollbar_hovered: false,
+                is_vertical_scrollbar_hovered: true,
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            },
+        );
+        assert_eq!(hover.vertical_rail.background, Some(track));
+        assert_eq!(hover.vertical_rail.scroller.background, scroller);
+        assert_eq!(hover.vertical_rail.scroller.border.width, 1.0);
     }
 }

@@ -14,7 +14,7 @@ use std::{
 };
 
 use iced::{
-    Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme,
+    Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget,
         graphics::text::{Paragraph, cosmic_text},
@@ -84,6 +84,64 @@ pub enum Part {
     Range((usize, usize), (usize, usize)),
 }
 
+/// Extra copies behind shaped text for an owner theme's shadow, glow,
+/// outline and embossed edge. This stays independent of the kit [`Theme`]
+/// so package-only decoration does not enlarge Wired's theme boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextLight {
+    pub shadow: Option<(Color, Vector)>,
+    pub glow: Option<(Color, f32)>,
+    pub outline: Option<(Color, f32)>,
+    pub emboss: bool,
+}
+
+pub(crate) fn draw_light(
+    renderer: &mut Renderer,
+    paragraph: &Paragraph,
+    at: Point,
+    viewport: Rectangle,
+    light: TextLight,
+) {
+    use iced::advanced::text::Renderer as _;
+
+    let mut draw = |offset: Vector, color: Color| {
+        renderer.fill_paragraph(paragraph, at + offset, color, viewport);
+    };
+    if let Some((color, offset)) = light.shadow {
+        draw(offset, color);
+    }
+    if light.emboss {
+        draw(
+            Vector::new(-1.0, -1.0),
+            Color::from_rgba8(255, 255, 255, 0.35),
+        );
+        draw(Vector::new(1.0, 1.0), Color::from_rgba8(0, 0, 0, 0.5));
+    }
+    let around = [
+        Vector::new(-1.0, 0.0),
+        Vector::new(1.0, 0.0),
+        Vector::new(0.0, -1.0),
+        Vector::new(0.0, 1.0),
+        Vector::new(-0.707, -0.707),
+        Vector::new(0.707, -0.707),
+        Vector::new(-0.707, 0.707),
+        Vector::new(0.707, 0.707),
+    ];
+    if let Some((color, reach)) = light.glow.filter(|(_, reach)| *reach > 0.0) {
+        // Slint builds the soft edge from wide and half-wide copies.
+        for radius in [reach, reach / 2.0] {
+            for direction in around {
+                draw(direction * radius, color);
+            }
+        }
+    }
+    if let Some((color, width)) = light.outline.filter(|(_, width)| *width > 0.0) {
+        for direction in around {
+            draw(direction * width, color);
+        }
+    }
+}
+
 impl Part {
     /// The part of `from..to` (in order) in the piece `row`, `part`.
     pub fn of(from: Mark, to: Mark, row: usize, part: PartNo) -> Self {
@@ -131,6 +189,7 @@ pub struct Piece<'a, M> {
     size: f32,
     line_height: f32,
     color: Color,
+    light: TextLight,
     fill: bool,
     /// A press here starts a selection; the author's starts a click instead.
     starts: bool,
@@ -184,6 +243,7 @@ impl<'a, M> Piece<'a, M> {
             size: 16.0,
             line_height: 22.0,
             color: Color::WHITE,
+            light: TextLight::default(),
             fill: false,
             starts: true,
             dragging: false,
@@ -247,6 +307,13 @@ impl<'a, M> Piece<'a, M> {
         self
     }
 
+    /// Draws theme light behind this shaped paragraph without changing its
+    /// layout, links, selection or inline pictures.
+    pub fn light(mut self, light: TextLight) -> Self {
+        self.light = light;
+        self
+    }
+
     pub fn fill(mut self) -> Self {
         self.fill = true;
         self
@@ -301,6 +368,10 @@ struct State {
     version: iced::advanced::graphics::text::Version,
     width: f32,
     paragraph: Paragraph,
+    /// The same glyph layout with every span's own colour cleared, so an
+    /// owner-theme light pass can tint links, mentions and ordinary runs as
+    /// one silhouette without changing their shaping.
+    light: Paragraph,
     /// The last place reported while dragging, so moving within a glyph
     /// reports nothing.
     reported: Option<Mark>,
@@ -328,6 +399,7 @@ impl<M> Widget<M, Theme, Renderer> for Piece<'_, M> {
             version: Default::default(),
             width: -1.0,
             paragraph: Paragraph::default(),
+            light: Paragraph::default(),
             reported: None,
         })
     }
@@ -345,8 +417,27 @@ impl<M> Widget<M, Theme, Renderer> for Piece<'_, M> {
             .expect("font system")
             .version();
         if state.stamp != self.stamp || state.version != version {
+            let mut light_spans = self.spans.clone();
+            for span in &mut light_spans {
+                span.color = None;
+            }
             state.paragraph = Paragraph::with_spans(text::Text {
                 content: self.spans.as_slice(),
+                bounds: Size::new(width, f32::INFINITY),
+                size: Pixels(self.size),
+                line_height: LineHeight::Absolute(Pixels(self.line_height)),
+                font: REGULAR,
+                align_x: text::Alignment::Default,
+                align_y: iced::alignment::Vertical::Top,
+                shaping: text::Shaping::Advanced,
+                wrapping: if self.fill {
+                    Wrapping::WordOrGlyph
+                } else {
+                    Wrapping::None
+                },
+            });
+            state.light = Paragraph::with_spans(text::Text {
+                content: light_spans.as_slice(),
                 bounds: Size::new(width, f32::INFINITY),
                 size: Pixels(self.size),
                 line_height: LineHeight::Absolute(Pixels(self.line_height)),
@@ -365,6 +456,7 @@ impl<M> Widget<M, Theme, Renderer> for Piece<'_, M> {
             state.width = width;
         } else if state.width != width {
             state.paragraph.resize(Size::new(width, f32::INFINITY));
+            state.light.resize(Size::new(width, f32::INFINITY));
             state.width = width;
         }
         let bounds = state.paragraph.min_bounds();
@@ -636,6 +728,13 @@ impl<M> Widget<M, Theme, Renderer> for Piece<'_, M> {
                 }
             }
         }
+        draw_light(
+            renderer,
+            &state.light,
+            bounds.position(),
+            *viewport,
+            self.light,
+        );
         renderer.fill_paragraph(&state.paragraph, bounds.position(), self.color, *viewport);
         for (index, picture) in &self.pictures {
             for region in state.paragraph.span_bounds(*index) {

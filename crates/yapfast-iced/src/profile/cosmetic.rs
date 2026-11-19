@@ -207,6 +207,24 @@ pub(super) fn dressed<'a>(
         Mode::Docked => ctx.profiles.effect.panel,
         Mode::Card | Mode::Side => ctx.profiles.effect.card,
     };
+    let card = if mode != Mode::Docked && !super::inks(ctx, &shown.look, mode).themed {
+        crate::theme_art::surface_over(
+            card,
+            ctx,
+            yapfast_core::themes::package::art::ArtSurface::CardOver,
+        )
+    } else {
+        card
+    };
+    let card = if mode == Mode::Docked {
+        crate::theme_effects::interactive(card, ctx)
+    } else {
+        crate::theme_effects::foil(
+            card,
+            ctx,
+            yapfast_core::themes::package::art::FoilSurface::Card,
+        )
+    };
     let card = match effect_view(ctx, shown, width, since) {
         Some(effect) => stack![card, effect].into(),
         None => card,

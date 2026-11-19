@@ -318,8 +318,20 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
 /// `width` within what the panel may take: 320 to 800 px, and no more
 /// than leaves the conversation 420 px.
 fn aside_room(app: &App, width: f32) -> f32 {
+    let package = app.themes.package_layout(&app.theme.id);
+    let navigation_right = if crate::conversation::navigation_right(package) {
+        crate::conversation::themed_navigation(
+            &app.layout,
+            &app.theme,
+            package,
+            app.themes.chrome(&app.theme.id),
+        )
+    } else {
+        0.0
+    };
     let most =
-        (app.window.width - CHAT_KEPT - crate::conversation::chat_left(app)).clamp(LEAST, MOST);
+        (app.window.width - navigation_right - crate::conversation::chat_left(app) - CHAT_KEPT)
+            .clamp(LEAST, MOST);
     width.clamp(LEAST, most)
 }
 
@@ -447,6 +459,13 @@ fn measure_aside(app: &mut App, old: &Messages, edge_changed: bool) {
         aside.heights = heights;
         aside.place_rows();
     }
+}
+
+/// A resolved theme can change the thread's fonts and geometry without
+/// changing any palette-valued field in the kit Theme. Rebuild every cached
+/// thread row after that resolution changes.
+pub fn theme_changed(app: &mut App) {
+    measure_aside(app, &Messages::default(), true);
 }
 
 /// Heights the thread's rows found at their last layout.
@@ -656,7 +675,7 @@ impl<'a> SideComposer<'a> {
                 ground: iced::Color::TRANSPARENT,
                 text: theme.text,
                 placeholder: theme.placeholder,
-                selection: theme.selection,
+                selection: theme.token_colour("selection", theme.selection),
             },
         )
         .padding(Padding {

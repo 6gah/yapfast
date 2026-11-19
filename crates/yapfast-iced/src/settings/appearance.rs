@@ -1,8 +1,7 @@
-//! Appearance: the themes as small windows drawn in their own colours (a
-//! click shows one at once and keeps it), New theme and each custom theme's
-//! pencil opening the editor, whose changes show at once (Save keeps them
-//! among the person's own themes, Cancel puts the theme from before back),
-//! and the profile switches. See docs/themes.md.
+//! Appearance's theme shortcuts and profile switches, and the dedicated
+//! Themes page: installed packages, the person's own themes, their options
+//! and performance. The editor's changes show at once; Save keeps them and
+//! Cancel puts the theme from before back. See docs/themes.md.
 
 use iced::{
     Alignment, Border, Color, Element, Length,
@@ -11,12 +10,13 @@ use iced::{
 use yapfast_core::{
     application::Action,
     theme::{self as palette, Custom},
+    themes::{Mode, Performance, options},
 };
 
-use super::{Drop, Event as SettingsEvent, Page, Settings};
+use super::{Drop, Event as SettingsEvent, Page, Section, Settings, theme_marketplace};
 use crate::{
     app::Message,
-    controls::{Kind, action, lights, placed},
+    controls::{Kind, action, lights, placed, slider},
     ctx::{Cx, Pref as Shown, Request},
     fonts::{BOLD, MEDIUM},
     form::{self, switch},
@@ -111,6 +111,18 @@ impl Editor {
 #[derive(Clone, Debug)]
 pub enum Event {
     Choose(String),
+    TurnOff,
+    Revert,
+    Performance(i32),
+    ReduceMotion(bool),
+    ReadableText(bool),
+    ThemeOption(String, String, serde_json::Value),
+    ThemeContent(String, bool),
+    ThemeNotificationSounds(String, bool),
+    ThemeInterfaceSounds(String, bool),
+    ThemeInterfaceVolume(String, u8),
+    ThemeTransitions(bool),
+    Creator(super::theme_creator::Event),
     New,
     Edit(String),
     Start(usize),
@@ -136,17 +148,136 @@ pub enum Cosmetic {
 }
 
 fn theme_message(event: Event) -> Message {
-    Message::Settings(SettingsEvent::Theme(event))
+    crate::app::settings(SettingsEvent::Theme(event))
+}
+
+fn marketplace_message(event: theme_marketplace::Event) -> Message {
+    crate::app::settings(SettingsEvent::Marketplace(event))
+}
+
+fn number(value: f64) -> serde_json::Value {
+    serde_json::Number::from_f64(value)
+        .map(serde_json::Value::Number)
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn modes_text(modes: &[Mode]) -> &'static str {
+    match modes {
+        [Mode::Dark, Mode::Light] => "Dark and light",
+        [Mode::Light] => "Light",
+        _ => "Dark",
+    }
+}
+
+fn option_slider<'a>(
+    theme: &crate::theme::Theme,
+    option: &options::ThemeOption,
+    value: &serde_json::Value,
+    min: f64,
+    max: f64,
+    step: f64,
+    message: impl Fn(serde_json::Value) -> Message + 'a,
+) -> Element<'a, Message> {
+    let steps = ((max - min) / step).round().max(1.0) as u32;
+    let chosen = value.as_f64().unwrap_or(min).clamp(min, max);
+    let at = ((chosen - min) / step).round().clamp(0.0, f64::from(steps)) as u32;
+    let mut control = column![
+        slider(option.label.clone(), at, steps, move |at| {
+            message(number(min + f64::from(at) * step))
+        })
+        .step(1)
+        .shown(option.describe(value))
+        .mark(false)
+        .view(theme)
+    ]
+    .spacing(4);
+    if !option.description.is_empty() {
+        control = control.push(form::note(theme, option.description.clone()));
+    }
+    control.into()
 }
 
 impl Settings {
-    pub(super) fn theme_event(&mut self, event: Event, cx: &mut Cx<'_>) {
+    pub(super) fn theme_event(&mut self, event: Event, cx: &mut Cx<'_>) -> iced::Task<Message> {
         match event {
+            Event::Creator(event) => return self.creator_event(event, cx),
             Event::Choose(id) => choose(cx, &id),
+            Event::TurnOff => {
+                cx.themes.turn_off(cx.client.root());
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::Revert => {
+                if cx.themes.revert(cx.client.root()) {
+                    cx.request(Request::Changed(Shown::Theme));
+                }
+            }
+            Event::Performance(index) => {
+                let performance = Performance::from_index(index);
+                cx.layout.theme_performance = performance;
+                cx.keep("theme_performance", performance);
+                cx.themes
+                    .motion_changed(performance, cx.layout.reduce_motion);
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::ReduceMotion(on) => {
+                cx.layout.reduce_motion = on;
+                cx.keep("reduce_motion", on);
+                cx.themes.motion_changed(cx.layout.theme_performance, on);
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::ReadableText(on) => {
+                cx.layout.readable_text = on;
+                cx.keep("readable_text", on);
+                cx.themes.readable_changed(on);
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::ThemeOption(id, option, value) => {
+                let Some(choices) = cx.themes.set_option(
+                    &id,
+                    &option,
+                    value,
+                    cx.layout.theme_performance,
+                    cx.layout.reduce_motion,
+                ) else {
+                    return iced::Task::none();
+                };
+                if choices.is_empty() {
+                    cx.layout.theme_options.remove(&id);
+                } else {
+                    cx.layout.theme_options.insert(id, choices);
+                }
+                cx.keep("theme_options", &cx.layout.theme_options);
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::ThemeContent(id, on) => {
+                if on {
+                    cx.layout.theme_content.insert(id);
+                } else {
+                    cx.layout.theme_content.remove(&id);
+                }
+                cx.keep("theme_content", &cx.layout.theme_content);
+                cx.request(Request::Changed(Shown::Theme));
+            }
+            Event::ThemeNotificationSounds(id, on) => {
+                change_sound_prefs(cx, &id, |prefs| prefs.on = on);
+            }
+            Event::ThemeInterfaceSounds(id, on) => {
+                change_sound_prefs(cx, &id, |prefs| prefs.interface = on);
+            }
+            Event::ThemeInterfaceVolume(id, volume) => {
+                change_sound_prefs(cx, &id, |prefs| prefs.volume = volume.min(100));
+            }
+            Event::ThemeTransitions(on) => {
+                cx.layout.theme_transitions = on;
+                cx.keep("theme_transitions", on);
+            }
             Event::New => self.new_theme(cx),
             Event::Edit(id) => {
+                if self.edit_creator(&id, cx) {
+                    return iced::Task::none();
+                }
                 let Some(custom) = cx.themes.custom.iter().find(|custom| custom.id == id) else {
-                    return;
+                    return iced::Task::none();
                 };
                 let editor = Editor::new(
                     Some(custom.id.clone()),
@@ -161,10 +292,10 @@ impl Settings {
                     .map(|start| (start.base, start.theme, copy_name(start.name)))
                     .collect();
                 let Some(editor) = self.editor.as_mut() else {
-                    return;
+                    return iced::Task::none();
                 };
                 let Some((base, theme, name)) = starts.get(index).cloned() else {
-                    return;
+                    return iced::Task::none();
                 };
                 // It takes the new start's name too, unless the person
                 // named it.
@@ -206,6 +337,7 @@ impl Settings {
             Event::Delete => self.delete_theme(cx),
             Event::Profile(cosmetic, on) => self::cosmetic(cx, cosmetic, on),
         }
+        iced::Task::none()
     }
 
     /// Opens the editor on a copy of the theme shown, which can start from
@@ -233,6 +365,10 @@ impl Settings {
     }
 
     fn open_editor(&mut self, editor: Editor, cx: &mut Cx<'_>) {
+        // As in the owner UI, New theme and Edit in Appearance lead to the
+        // creator inside Settings → Themes rather than turning Appearance
+        // into a second theme-management page.
+        self.section = Some(Section::Themes);
         self.editor = Some(editor);
         self.show_edited(cx);
     }
@@ -248,7 +384,7 @@ impl Settings {
     }
 
     /// Closes the editor: the window shows the theme chosen again.
-    fn close_editor(&mut self, cx: &mut Cx<'_>) -> Option<Editor> {
+    pub(super) fn close_editor(&mut self, cx: &mut Cx<'_>) -> Option<Editor> {
         let editor = self.editor.take()?;
         if self.preview.take().is_some() {
             cx.request(Request::Changed(Shown::Theme));
@@ -286,6 +422,8 @@ impl Settings {
                     name,
                     base: editor.base,
                     theme: editor.theme,
+                    creator: None,
+                    folder: None,
                 });
                 id
             }
@@ -297,6 +435,7 @@ impl Settings {
     /// Closes the editor and shows the theme from before it opened.
     pub(super) fn cancel_theme(&mut self, cx: &mut Cx<'_>) {
         self.close_editor(cx);
+        self.close_creator(cx);
     }
 
     /// Deletes the theme edited; if it was the chosen one, Yap shows.
@@ -312,12 +451,13 @@ impl Settings {
             return;
         };
         if let Some(id) = editor.editing {
-            cx.themes.custom.retain(|custom| custom.id != id);
+            let changed = cx.themes.forget_custom(cx.client.root(), &id);
+            cx.layout.custom_themes.clone_from(&cx.themes.custom);
             cx.keep("custom_themes", &cx.themes.custom);
+            if changed {
+                cx.request(Request::Changed(Shown::Theme));
+            }
         }
-        let (id, _) = palette::chosen(cx.themes.chosen.as_deref(), &cx.themes.custom);
-        let id = id.to_owned();
-        choose(cx, &id);
     }
 }
 
@@ -328,7 +468,34 @@ fn choose(cx: &mut Cx<'_>, id: &str) {
         return;
     };
     cx.themes.choose(cx.client.root(), &theme.id);
-    cx.request(Request::Changed(Shown::Theme));
+    cx.request(Request::ThemeApplied);
+}
+
+/// Changes one applied package's sound choices, omitting the map entry when
+/// every value is the owner's default. Notification replacements are
+/// reapplied immediately when this is the active theme.
+fn change_sound_prefs(
+    cx: &mut Cx<'_>,
+    id: &str,
+    change: impl FnOnce(&mut crate::themes::SoundPrefs),
+) {
+    let Some(mut prefs) = cx.themes.sound_prefs(id) else {
+        return;
+    };
+    change(&mut prefs);
+    if !cx.themes.set_sound_prefs(id, prefs) {
+        return;
+    }
+    if prefs == crate::themes::SoundPrefs::default() {
+        cx.layout.theme_sounds.remove(id);
+    } else {
+        cx.layout.theme_sounds.insert(id.to_owned(), prefs);
+    }
+    cx.keep("theme_sounds", &cx.layout.theme_sounds);
+    let active = cx.themes.chosen_id().to_owned();
+    if active == id {
+        cx.themes.apply_sounds(&active);
+    }
 }
 
 /// A profile switch: kept, and the core told what may now show.
@@ -356,12 +523,8 @@ fn cosmetic(cx: &mut Cx<'_>, cosmetic: Cosmetic, on: bool) {
 
 impl<'a> Page<'a> {
     pub(super) fn appearance_page(self) -> Element<'a, Message> {
-        let settings = self.s;
         let theme = self.cx.look.theme;
-        if let Some(editor) = &settings.editor {
-            return self.editor_view(editor, settings.open == Some(Drop::Start));
-        }
-        let tiles = self.theme_tiles();
+        let tiles = self.theme_tiles(true);
         let prefs = &self.cx.layout.prefs;
         let cosmetics = prefs.cosmetics();
         let profile = |label, description, on: bool, which| {
@@ -369,17 +532,71 @@ impl<'a> Page<'a> {
                 .description(description)
                 .view(self.cx.look)
         };
+        let theme_options = self.installed_theme_options();
+        let installed_name = self
+            .cx
+            .themes
+            .installed
+            .iter()
+            .find(|installed| self.cx.themes.chosen_id() == installed.id)
+            .map(|installed| installed.name.clone());
+        let actions = row![
+            action(
+                theme,
+                "Browse themes",
+                Kind::Plain,
+                Some(crate::app::settings(SettingsEvent::Open(Section::Themes))),
+            )
+            .small()
+            .icon(
+                self.cx
+                    .look
+                    .icon(Icon::Brush, 16, crate::theme::rgb(theme.text))
+            ),
+            action(
+                theme,
+                "New theme",
+                Kind::Plain,
+                Some(theme_message(Event::New))
+            )
+            .small()
+            .icon(
+                self.cx
+                    .look
+                    .icon(Icon::Plus, 16, crate::theme::rgb(theme.text))
+            ),
+        ]
+        .spacing(8);
+        let installed_note: Element<'a, Message> = installed_name.map_or_else(
+            || Space::new().height(0).into(),
+            |name| {
+                form::note(
+                    theme,
+                    format!(
+                        "Showing {name}, an installed theme. Choose one above, or manage it in Themes."
+                    ),
+                )
+            },
+        );
         form::page([
             form::title(theme, "Appearance"),
             form::group([
-                form::beside(
-                    form::heading(theme, "THEME"),
-                    action(theme, "New theme", Kind::Plain, Some(theme_message(Event::New)))
-                        .small()
-                        .icon(self.cx.look.icon(Icon::Plus, 16, crate::theme::rgb(theme.text))),
-                ),
+                form::beside(form::heading(theme, "THEME"), actions),
                 tiles,
             ]),
+            installed_note,
+            theme_options,
+            switch(
+                "Readable text",
+                self.cx.layout.readable_text,
+                Some(theme_message(Event::ReadableText(
+                    !self.cx.layout.readable_text,
+                ))),
+            )
+            .description(
+                "Messages, names, channels and what you type use Yapfast's own font in every theme. The theme's art, colours and layout stay.",
+            )
+            .view(self.cx.look),
             self.title_bar_switch(),
             column![
                 form::heading(theme, "PROFILES"),
@@ -431,15 +648,585 @@ impl<'a> Page<'a> {
         ])
     }
 
+    /// Settings → Themes, corresponding to the owner UI's Installed tab.
+    /// Marketplace, URL installation and the creator's advanced workflow
+    /// remain separate later slabs; package management does not live in
+    /// Appearance merely because the iced rewrite originally lacked this
+    /// destination.
+    pub(super) fn themes_page(self) -> Element<'a, Message> {
+        let settings = self.s;
+        let theme = self.cx.look.theme;
+        if let Some(creator) = &settings.creator {
+            return self.creator_view(creator);
+        }
+        if let Some(editor) = &settings.editor {
+            return self.editor_view(editor, settings.open == Some(Drop::Start));
+        }
+
+        let tabs = self.theme_tabs();
+        if settings.marketplace.tab != theme_marketplace::Tab::Installed {
+            return form::page([
+                tabs,
+                self.theme_trial_banner(),
+                settings
+                    .marketplace
+                    .view(self.cx.look, self.cx.themes)
+                    .map(marketplace_message),
+            ]);
+        }
+
+        let custom_applied = self
+            .cx
+            .themes
+            .custom
+            .iter()
+            .any(|custom| self.cx.themes.chosen_id() == custom.id);
+        let mut own_actions = row![].spacing(8);
+        if custom_applied {
+            own_actions = own_actions.push(
+                action(
+                    theme,
+                    "Turn off theme",
+                    Kind::Plain,
+                    Some(theme_message(Event::TurnOff)),
+                )
+                .small(),
+            );
+        }
+        own_actions = own_actions.push(
+            action(
+                theme,
+                "Create theme",
+                Kind::Primary,
+                Some(theme_message(Event::Creator(
+                    super::theme_creator::Event::Open,
+                ))),
+            )
+            .small(),
+        );
+        own_actions = own_actions.push(
+            action(
+                theme,
+                "Colour editor",
+                Kind::Plain,
+                Some(theme_message(Event::New)),
+            )
+            .small()
+            .icon(
+                self.cx
+                    .look
+                    .icon(Icon::Plus, 16, crate::theme::rgb(theme.text)),
+            ),
+        );
+        let own: Element<'a, Message> = if self.cx.themes.custom.is_empty() {
+            form::note(
+                theme,
+                "No themes of your own yet. Create theme opens the guided creator; Colour editor keeps the earlier palette-only workflow.",
+            )
+        } else {
+            self.theme_tiles(false)
+        };
+
+        let previous = self.cx.themes.previous().map(|(_, name)| {
+            action(
+                theme,
+                format!("Back to {name}"),
+                Kind::Plain,
+                Some(theme_message(Event::Revert)),
+            )
+            .small()
+            .icon(self.cx.look.icon(
+                Icon::ArrowLeft,
+                16,
+                crate::theme::rgb(theme.text),
+            ))
+        });
+
+        form::page([
+            tabs,
+            self.theme_trial_banner(),
+            form::title(theme, "Themes"),
+            form::note(
+                theme,
+                "Themes restyle Yapfast: its colours, fonts, shapes, art and sounds. A theme is data, never code.",
+            ),
+            previous.map_or_else(
+                || Space::new().height(0).into(),
+                |previous| row![previous].into(),
+            ),
+            self.installed_themes(),
+            self.refused_themes(),
+            form::group([
+                form::beside(form::heading(theme, "YOUR THEMES"), own_actions),
+                own,
+            ]),
+            self.installed_theme_options(),
+            self.installed_theme_content(),
+            self.installed_theme_sounds(),
+            self.theme_performance(),
+        ])
+    }
+
+    fn theme_tabs(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let current = self.s.marketplace.tab;
+        let tab = |label, wanted| {
+            action(
+                theme,
+                label,
+                if current == wanted {
+                    Kind::Primary
+                } else {
+                    Kind::Plain
+                },
+                (current != wanted)
+                    .then_some(marketplace_message(theme_marketplace::Event::Tab(wanted))),
+            )
+            .small()
+        };
+        row![
+            tab("Installed", theme_marketplace::Tab::Installed),
+            tab("Marketplace", theme_marketplace::Tab::Marketplace),
+            tab("Add from URL", theme_marketplace::Tab::AddFromUrl),
+            action(
+                theme,
+                "Create",
+                Kind::Plain,
+                Some(theme_message(Event::Creator(
+                    super::theme_creator::Event::Open,
+                ))),
+            )
+            .small(),
+        ]
+        .spacing(8)
+        .into()
+    }
+
+    fn theme_trial_banner(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let Some(trial) = self.cx.themes.trial() else {
+            return Space::new().height(0).into();
+        };
+        container(
+            row![
+                column![
+                    text(format!("Trying {}", trial.name))
+                        .size(15)
+                        .font(BOLD)
+                        .color(theme.text),
+                    text(format!("Reverting in {} seconds", trial.seconds))
+                        .size(13)
+                        .color(theme.secondary),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                action(
+                    theme,
+                    "Revert",
+                    Kind::Plain,
+                    Some(marketplace_message(theme_marketplace::Event::RevertTrial)),
+                )
+                .small(),
+                action(
+                    theme,
+                    "Keep",
+                    Kind::Primary,
+                    Some(marketplace_message(theme_marketplace::Event::KeepTrial)),
+                )
+                .small(),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding(12)
+        .style(move |_| crate::style::rounded(theme.raised, 8))
+        .into()
+    }
+
+    /// Installed package themes, with the applied one offering the way
+    /// back to the stock default.
+    fn installed_themes(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let mut rows = column![].spacing(8);
+        if self.cx.themes.installed.is_empty() && self.cx.themes.refused.is_empty() {
+            rows = rows.push(form::note(
+                theme,
+                "No theme packages are installed in this data folder.",
+            ));
+        } else if self.cx.themes.installed.is_empty() {
+            rows = rows.push(form::note(theme, "No installed theme could be opened."));
+        } else {
+            for installed in &self.cx.themes.installed {
+                let applied = self.cx.themes.chosen_id() == installed.id;
+                let authors = installed.authors.join(", ");
+                let details = if authors.is_empty() {
+                    format!("v{} · {}", installed.version, modes_text(&installed.modes))
+                } else {
+                    format!(
+                        "by {authors} · v{} · {}",
+                        installed.version,
+                        modes_text(&installed.modes)
+                    )
+                };
+                let mut label = column![
+                    text(installed.name.clone())
+                        .size(15)
+                        .font(if applied { BOLD } else { MEDIUM })
+                        .color(theme.text),
+                    text(if applied { "Applied" } else { "Installed" })
+                        .size(12)
+                        .color(if applied { theme.accent } else { theme.muted }),
+                    text(details).size(13).color(theme.muted),
+                ]
+                .spacing(2)
+                .width(Length::Fill);
+                if !installed.description.is_empty() {
+                    label = label.push(
+                        text(installed.description.clone())
+                            .size(13)
+                            .color(theme.secondary),
+                    );
+                }
+                if !installed.notes.is_empty() {
+                    label = label.push(
+                        text(format!(
+                            "Left out by this Yapfast: {}",
+                            installed.notes.join("\n")
+                        ))
+                        .size(12)
+                        .color(theme.muted),
+                    );
+                }
+                let press = if applied {
+                    Event::TurnOff
+                } else {
+                    Event::Choose(installed.id.clone())
+                };
+                let package_id = installed
+                    .id
+                    .strip_prefix(crate::themes::INSTALLED)
+                    .unwrap_or(&installed.id)
+                    .to_owned();
+                let mut actions = row![].spacing(6).align_y(Alignment::Center);
+                if !applied {
+                    actions = actions.push(
+                        action(
+                            theme,
+                            "Try",
+                            Kind::Plain,
+                            Some(marketplace_message(theme_marketplace::Event::TryInstalled(
+                                installed.id.clone(),
+                            ))),
+                        )
+                        .small(),
+                    );
+                }
+                actions = actions.push(
+                    action(
+                        theme,
+                        if applied { "Turn off theme" } else { "Apply" },
+                        Kind::Plain,
+                        Some(theme_message(press)),
+                    )
+                    .small(),
+                );
+                if installed.previous.is_some() {
+                    actions = actions.push(
+                        action(
+                            theme,
+                            "Roll back",
+                            Kind::Plain,
+                            Some(marketplace_message(theme_marketplace::Event::RollBack(
+                                package_id.clone(),
+                            ))),
+                        )
+                        .small(),
+                    );
+                }
+                actions = actions.push(
+                    action(
+                        theme,
+                        "Remove",
+                        Kind::Ghost,
+                        Some(marketplace_message(theme_marketplace::Event::Uninstall(
+                            package_id,
+                        ))),
+                    )
+                    .small(),
+                );
+                rows = rows.push(row![label, actions].spacing(12).align_y(Alignment::Center));
+            }
+        }
+        form::group([form::heading(theme, "INSTALLED THEMES"), rows.into()])
+    }
+
+    /// Lock entries or packages the core refused, kept visible with the
+    /// exact reason returned by the installed-theme reader.
+    fn refused_themes(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        if self.cx.themes.refused.is_empty() {
+            return Space::new().height(0).into();
+        }
+        let mut rows = column![].spacing(10);
+        for refused in &self.cx.themes.refused {
+            rows = rows.push(
+                column![
+                    text(refused.id.clone())
+                        .size(14)
+                        .font(MEDIUM)
+                        .color(theme.danger_text),
+                    form::note_in(refused.reason.clone(), theme.danger_text),
+                ]
+                .spacing(3),
+            );
+        }
+        form::group([
+            form::heading(theme, "THEMES THAT COULDN'T BE OPENED"),
+            form::note(
+                theme,
+                "These entries remain installed, but Yapfast will not use files it cannot verify.",
+            ),
+            rows.into(),
+        ])
+    }
+
+    /// The applied package's switches, choices and sliders. Values are
+    /// normalized by the core option before the package is resolved again.
+    fn installed_theme_options(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let Some(installed) = self
+            .cx
+            .themes
+            .installed
+            .iter()
+            .find(|installed| self.cx.themes.chosen_id() == installed.id)
+        else {
+            return Space::new().height(0).into();
+        };
+        let mut rows = column![].spacing(12);
+        let mut any = false;
+        for option in &installed.options {
+            if !option.active(&installed.options, &installed.choices) {
+                continue;
+            }
+            any = true;
+            let value = option.value(&installed.choices);
+            let id = installed.id.clone();
+            let option_id = option.id.clone();
+            let message = move |value| {
+                theme_message(Event::ThemeOption(id.clone(), option_id.clone(), value))
+            };
+            let control: Element<'a, Message> = match &option.kind {
+                options::Kind::Toggle { .. } => switch(
+                    option.label.clone(),
+                    value.as_bool().unwrap_or(false),
+                    Some(message(serde_json::Value::Bool(
+                        !value.as_bool().unwrap_or(false),
+                    ))),
+                )
+                .description(option.description.clone())
+                .view(self.cx.look),
+                options::Kind::Choice { choices, .. } => {
+                    let selected = value
+                        .as_str()
+                        .and_then(|value| choices.iter().position(|choice| choice.value == value));
+                    let offered = choices
+                        .iter()
+                        .map(|choice| form::Choice {
+                            title: choice.label.clone().into(),
+                            description: String::new().into(),
+                            colour: None,
+                            offered: true,
+                        })
+                        .collect();
+                    let id = installed.id.clone();
+                    let option_id = option.id.clone();
+                    let values: Vec<_> =
+                        choices.iter().map(|choice| choice.value.clone()).collect();
+                    column![
+                        text(option.label.clone())
+                            .size(14)
+                            .font(MEDIUM)
+                            .color(theme.text),
+                        if option.description.is_empty() {
+                            Space::new().height(0).into()
+                        } else {
+                            form::note(theme, option.description.clone())
+                        },
+                        form::options(theme, offered, selected, true, move |index| {
+                            theme_message(Event::ThemeOption(
+                                id.clone(),
+                                option_id.clone(),
+                                serde_json::Value::String(values[index].clone()),
+                            ))
+                        })
+                    ]
+                    .spacing(6)
+                    .into()
+                }
+                options::Kind::Slider { min, max, step, .. } => {
+                    option_slider(theme, option, &value, *min, *max, *step, message)
+                }
+                options::Kind::Hue { .. } => {
+                    option_slider(theme, option, &value, 0.0, 360.0, 1.0, message)
+                }
+            };
+            rows = rows.push(control);
+        }
+        if !any {
+            return Space::new().height(0).into();
+        }
+        form::group([form::heading(theme, "THEME OPTIONS"), rows.into()])
+    }
+
+    /// People's content is the one package surface that stays opt-in, as
+    /// the owner theme system promises. The switch is offered only when
+    /// the applied package actually changes content.
+    fn installed_theme_content(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let id = self.cx.themes.chosen_id();
+        let Some(phrase) = self.cx.themes.content_phrase(id) else {
+            return Space::new().height(0).into();
+        };
+        let on = self.cx.layout.theme_content.contains(id);
+        form::group([
+            form::heading(theme, "THEME CONTENT"),
+            switch(
+                "Let this theme style people's content",
+                on,
+                Some(theme_message(Event::ThemeContent(id.to_owned(), !on))),
+            )
+            .description(format!("When allowed: {phrase}."))
+            .view(self.cx.look),
+        ])
+    }
+
+    /// Sound replacements the applied package actually contains. Their
+    /// permissions and interface volume belong to that package id.
+    fn installed_theme_sounds(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let id = self.cx.themes.chosen_id();
+        let Some((notifications, interface)) = self.cx.themes.has_sounds(id) else {
+            return Space::new().height(0).into();
+        };
+        if !notifications && !interface {
+            return Space::new().height(0).into();
+        }
+        let prefs = self.cx.themes.sound_prefs(id).unwrap_or_default();
+        let mut rows = column![].spacing(10);
+        if notifications {
+            rows = rows.push(
+                switch(
+                    "Use theme notification sounds",
+                    prefs.on,
+                    Some(theme_message(Event::ThemeNotificationSounds(
+                        id.to_owned(),
+                        !prefs.on,
+                    ))),
+                )
+                .description(
+                    "Use this theme's sounds for messages, mentions, calls and other notifications.",
+                )
+                .view(self.cx.look),
+            );
+        }
+        if interface {
+            rows = rows.push(
+                switch(
+                    "Use theme interface sounds",
+                    prefs.interface,
+                    Some(theme_message(Event::ThemeInterfaceSounds(
+                        id.to_owned(),
+                        !prefs.interface,
+                    ))),
+                )
+                .description("Play this theme's sounds for buttons, menus and other actions.")
+                .view(self.cx.look),
+            );
+            rows = rows.push(
+                slider("Interface sound volume", u32::from(prefs.volume), 100, {
+                    let id = id.to_owned();
+                    move |volume| {
+                        theme_message(Event::ThemeInterfaceVolume(id.clone(), volume as u8))
+                    }
+                })
+                .step(1)
+                .shown(format!("{}%", prefs.volume))
+                .mark(false)
+                .view(theme),
+            );
+        }
+        form::group([form::heading(theme, "THEME SOUNDS"), rows.into()])
+    }
+
+    /// The package-wide performance and reduced-motion settings.
+    fn theme_performance(self) -> Element<'a, Message> {
+        let theme = self.cx.look.theme;
+        let choices = vec![
+            form::Choice {
+                title: "Full".into(),
+                description: "Run every theme animation at its requested rate.".into(),
+                colour: None,
+                offered: true,
+            },
+            form::Choice {
+                title: "Balanced".into(),
+                description: "Keep heavy theme animation still and limit the rest.".into(),
+                colour: None,
+                offered: true,
+            },
+            form::Choice {
+                title: "Light".into(),
+                description: "Use colours, fonts, shapes and spacing without theme animation."
+                    .into(),
+                colour: None,
+                offered: true,
+            },
+        ];
+        form::group([
+            form::heading(theme, "THEME PERFORMANCE"),
+            form::options(
+                theme,
+                choices,
+                Some(self.cx.layout.theme_performance.index() as usize),
+                true,
+                |index| theme_message(Event::Performance(index as i32)),
+            ),
+            switch(
+                "Reduce motion",
+                self.cx.layout.reduce_motion,
+                Some(theme_message(Event::ReduceMotion(
+                    !self.cx.layout.reduce_motion,
+                ))),
+            )
+            .description("Keep installed-theme animation and motion still.")
+            .view(self.cx.look),
+            switch(
+                "Transitions between channels",
+                self.cx.layout.theme_transitions,
+                Some(theme_message(Event::ThemeTransitions(
+                    !self.cx.layout.theme_transitions,
+                ))),
+            )
+            .description("Allow an installed theme's transition when the open channel changes.")
+            .view(self.cx.look),
+        ])
+    }
+
     /// The themes as tiles, as many 150 px or wider across as fit.
-    fn theme_tiles(self) -> Element<'a, Message> {
+    fn theme_tiles(self, include_built_in: bool) -> Element<'a, Message> {
         iced::widget::responsive(move |size| {
             let columns = ((size.width + TILE_GAP) / (TILE + TILE_GAP))
                 .floor()
                 .max(1.0) as usize;
             let width = (size.width - (columns - 1) as f32 * TILE_GAP) / columns as f32;
+            let built_in = if include_built_in {
+                palette::BUILT_IN.as_slice()
+            } else {
+                &[]
+            };
             let cards: Vec<(String, String, bool, palette::Theme)> =
-                palette::BUILT_IN
+                built_in
                     .iter()
                     .map(|built_in| {
                         (
@@ -545,7 +1332,7 @@ impl<'a> Page<'a> {
     fn editor_view(self, editor: &'a Editor, starts_open: bool) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
         let mut parts = vec![
-            form::title(theme, "Appearance"),
+            form::title(theme, "Themes"),
             form::group([
                 form::heading(
                     theme,
@@ -587,7 +1374,7 @@ impl<'a> Page<'a> {
                     names,
                     Some(editor.start),
                     starts_open,
-                    Message::Settings(SettingsEvent::Drop(Drop::Start)),
+                    crate::app::settings(SettingsEvent::Drop(Drop::Start)),
                     |index| theme_message(Event::Start(index)),
                 )
                 .view(self.cx.look),
@@ -763,7 +1550,7 @@ impl<'a> Page<'a> {
         switch(
             "Use the system title bar",
             system,
-            Some(Message::Settings(SettingsEvent::Pref(
+            Some(crate::app::settings(SettingsEvent::Pref(
                 super::pages::Pref::SystemTitleBar(!system),
             ))),
         )

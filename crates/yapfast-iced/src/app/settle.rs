@@ -174,6 +174,7 @@ impl App {
         let mut tasks = Vec::new();
         let mut focus = None;
         let mut heard: Vec<Pref> = Vec::new();
+        let mut theme_applied = false;
         // A close may ask more of its own, so this runs until none is
         // left.
         while !self.requests.is_empty() {
@@ -194,6 +195,12 @@ impl App {
                     Request::Changed(pref) => {
                         if !heard.contains(&pref) {
                             heard.push(pref);
+                        }
+                    }
+                    Request::ThemeApplied => {
+                        theme_applied = true;
+                        if !heard.contains(&Pref::Theme) {
+                            heard.push(Pref::Theme);
                         }
                     }
                     Request::TitleBar(system) => {
@@ -224,6 +231,9 @@ impl App {
         }
         for pref in heard {
             tasks.push(self.changed(pref));
+        }
+        if theme_applied {
+            self.theme_applied();
         }
         // The keys go where they were sent before the sync, so a field
         // that what the sync opens focuses (the status editor's, as My

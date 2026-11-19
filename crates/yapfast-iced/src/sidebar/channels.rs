@@ -10,7 +10,7 @@ use crate::{
     app::Message,
     controls::{self, ROW_COUNT, bar, count_pill},
     elide::elide,
-    fonts::{BOLD, MEDIUM, SEMIBOLD},
+    fonts::{BOLD, MEDIUM, REGULAR, SEMIBOLD},
     pictures::Icon,
     style::{corners, faded, rounded},
     widgets::{Drags, RightPress},
@@ -18,9 +18,48 @@ use crate::{
 
 use super::{CHAT_BUTTON, Event, GAP, HEADING, INSET, ROW, Room, SideRow, VOICE_CARD_GAP};
 
+fn themed_count_pill<'a>(
+    theme: &crate::theme::Theme,
+    count: &str,
+    badge: yapfast_core::themes::lists::MentionBadge,
+) -> Element<'a, Message> {
+    if badge.ground.is_none() && badge.ink.is_none() && badge.radius.is_none() {
+        return count_pill(theme, count, ROW_COUNT, None);
+    }
+    let ground = badge
+        .ground
+        .map(crate::themes::argb)
+        .unwrap_or(theme.danger);
+    let ink = badge
+        .ink
+        .map(crate::themes::argb)
+        .unwrap_or(theme.on_danger);
+    let radius = badge.radius.unwrap_or(ROW_COUNT.height / 2.0);
+    let number = text(count.to_owned())
+        .size(ROW_COUNT.size)
+        .font(BOLD)
+        .color(ink)
+        .wrapping(text::Wrapping::None);
+    let mut pill = container(number)
+        .padding([0.0, ROW_COUNT.pad])
+        .height(ROW_COUNT.height)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
+    if count.chars().count() < 2 {
+        pill = pill.width(ROW_COUNT.height);
+    }
+    pill.style(move |_| rounded(ground, radius)).into()
+}
+
 impl<'a> super::View<'a> {
     pub(super) fn side_row(self, row: &'a SideRow, place: Option<usize>) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
+        let row_gap = self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .and_then(|rows| rows.gap)
+            .unwrap_or(GAP);
         let inner: Element<'a, Message> = match row {
             SideRow::Screens {
                 friends,
@@ -49,8 +88,8 @@ impl<'a> super::View<'a> {
             .into(),
             SideRow::DmHeading => row![
                 text("Direct Messages")
-                    .size(12)
-                    .font(SEMIBOLD)
+                    .size(theme.type_size("labels", 12.0))
+                    .font(theme.font("labels", SEMIBOLD))
                     .color(theme.muted)
                     .width(Length::Fill),
                 self.cx
@@ -92,8 +131,8 @@ impl<'a> super::View<'a> {
             .into(),
             SideRow::Pinned => container(
                 text("PINNED CHANNELS")
-                    .size(12)
-                    .font(BOLD)
+                    .size(theme.type_size("labels", 12.0))
+                    .font(theme.font("labels", BOLD))
                     .color(theme.muted),
             )
             .padding(Padding {
@@ -113,18 +152,39 @@ impl<'a> super::View<'a> {
                 collapsed,
             } => self.heading(name, fold, *collapsed, place),
             SideRow::Room(room) => self.room_rows(room, place),
-            SideRow::Empty(words) => container(text(*words).size(14).color(theme.muted))
-                .padding(8)
-                .into(),
+            SideRow::Empty(words) => container(
+                text(*words)
+                    .size(theme.type_size("body", 14.0))
+                    .font(theme.font("body", REGULAR))
+                    .color(theme.muted),
+            )
+            .padding(8)
+            .into(),
         };
         let inset = container(inner)
             .padding(Padding {
                 left: INSET,
                 right: INSET,
-                bottom: GAP,
+                bottom: row_gap,
                 top: 0.0,
             })
             .width(Length::Fill);
+        let stripe = match row {
+            SideRow::Room(_) => place.and_then(|index| {
+                theme
+                    .surface_stripe("row")
+                    .filter(|stripe| stripe.channels && index % 2 == 1)
+                    .map(|stripe| stripe.colour)
+            }),
+            _ => None,
+        };
+        let inset: Element<'a, Message> = match stripe {
+            Some(ground) => container(inset)
+                .width(Length::Fill)
+                .style(move |_| crate::style::fill(ground))
+                .into(),
+            None => inset.into(),
+        };
         // A row that may be dragged: where it would land marked by a line
         // across its top (dragged up) or its foot (dragged down).
         let inset: Element<'a, Message> = match self.s.drop_line(place) {
@@ -136,13 +196,13 @@ impl<'a> super::View<'a> {
                     ..Padding::ZERO
                 });
                 let y = if below {
-                    row.height() - crate::arrange::LINE
+                    row.height(theme, row_gap) - crate::arrange::LINE
                 } else {
                     0.0
                 };
                 stack![inset, controls::placed(line, 0.0, y)].into()
             }
-            None => inset.into(),
+            None => inset,
         };
         // Where someone dragged from a voice channel would drop: outlined
         // in the drop line's green.
@@ -200,7 +260,7 @@ impl<'a> super::View<'a> {
                     _ => return inset,
                 };
                 let head = match row {
-                    SideRow::Room(room) => room.row_height(),
+                    SideRow::Room(room) => room.row_height(theme),
                     _ => HEADING,
                 };
                 Drags::new(inset)
@@ -215,10 +275,19 @@ impl<'a> super::View<'a> {
                 .into(),
             None => inset,
         };
-        match row {
+        let inset = match row {
             // Unread activity is marked at the sidebar's edge, as on the
             // rail, a thread's too.
-            SideRow::Room(room) if room.unread && !room.selected => {
+            SideRow::Room(room)
+                if room.unread
+                    && !room.selected
+                    && self
+                        .cx
+                        .themes
+                        .channel_rows(&theme.id)
+                        .and_then(|rows| rows.meta.unread)
+                        .is_none() =>
+            {
                 let ink = theme.text;
                 let mark = container(Space::new())
                     .width(4)
@@ -226,12 +295,55 @@ impl<'a> super::View<'a> {
                     .style(move |_| rounded(ink, corners([0.0, 4.0, 4.0, 0.0])));
                 stack![
                     inset,
-                    controls::placed(mark, 0.0, (room.row_height() - 8.0) / 2.0)
+                    controls::placed(mark, 0.0, (room.row_height(theme) - 8.0) / 2.0)
                 ]
                 .into()
             }
             _ => inset,
+        };
+        if matches!(row, SideRow::Room(_))
+            && let Some(separator) = self
+                .cx
+                .themes
+                .channel_rows(&theme.id)
+                .and_then(|rows| rows.separator.as_ref())
+        {
+            let row_height = row.height(theme, row_gap);
+            let separator: Option<(Element<'a, Message>, f32)> = match separator {
+                yapfast_core::themes::lists::Separator::Line {
+                    colour,
+                    width,
+                    inset: (left, right),
+                } => Some((
+                    container(bar(crate::themes::argb(*colour), Length::Fill, *width))
+                        .padding(Padding {
+                            left: *left,
+                            right: *right,
+                            ..Padding::ZERO
+                        })
+                        .into(),
+                    *width,
+                )),
+                yapfast_core::themes::lists::Separator::Art { art, height } => {
+                    crate::theme_art::tile_art(
+                        self.cx,
+                        yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                        art,
+                        super::width(self.cx.layout, theme),
+                        *height,
+                    )
+                    .map(|art| (art, *height))
+                }
+            };
+            if let Some((separator, height)) = separator {
+                return stack![
+                    inset,
+                    controls::placed(separator, 0.0, (row_height - row_gap - height).max(0.0),)
+                ]
+                .into();
+            }
         }
+        inset
     }
 
     /// A category's heading: 17 px above its name, the chevron after it
@@ -245,33 +357,66 @@ impl<'a> super::View<'a> {
         place: Option<usize>,
     ) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
+        let name = self.cx.themes.label(
+            &theme.id,
+            yapfast_core::themes::chrome::Label::Category,
+            name,
+            &[("name", name)],
+        );
+        let rows = self.cx.themes.channel_rows(&theme.id);
+        let headers = rows.map(|rows| &rows.headers);
+        let place_text = place.map_or_else(String::new, |place| (place + 1).to_string());
+        let name = if let Some(headers) = headers.filter(|headers| !headers.text.is_empty()) {
+            yapfast_core::themes::chrome::fill(
+                &headers.text,
+                &[("name", name.as_str()), ("n", place_text.as_str())],
+            )
+        } else {
+            name
+        };
+        let name = crate::themes::list_case(headers.and_then(|headers| headers.case), &name);
+        let name = theme.surface_words("label", &name).into_owned();
         let id = format!("heading:{fold}");
         let pointed = self.cx.pointed.side.as_deref() == Some(id.as_str());
-        let ink = if pointed {
+        let stock_ink = if pointed {
             theme.secondary
         } else {
             theme.muted
         };
+        let ink = headers
+            .and_then(|headers| headers.colour)
+            .map(crate::themes::argb)
+            .unwrap_or(stock_ink);
         // While a drag is on, as a text channel's row.
         let ink = if self.s.arrange_dimmed(None, false) {
             faded(ink, crate::arrange::DIM)
         } else {
             ink
         };
-        let face = row![
-            elide(name).size(14).font(SEMIBOLD).color(ink),
-            self.cx.look.glyph(
+        let mut words = row![
+            elide(name)
+                .size(
+                    headers
+                        .and_then(|headers| headers.size)
+                        .unwrap_or_else(|| theme.type_size("labels", 14.0)),
+                )
+                .font(theme.font("labels", SEMIBOLD))
+                .color(ink)
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        if headers.and_then(|headers| headers.chevron) != Some(false) {
+            words = words.push(self.cx.look.glyph(
                 if collapsed {
                     Icon::ChevronRight
                 } else {
                     Icon::ChevronDown
                 },
                 12,
-                ink
-            ),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
+                ink,
+            ));
+        }
+        let face = words;
         let mut face = row![face, Space::new().width(Length::Fill)].align_y(Alignment::Center);
         // Discord's "+", while the pointer is over a category this account
         // may make channels in.
@@ -287,21 +432,51 @@ impl<'a> super::View<'a> {
                     .size(CHAT_BUTTON, 16),
             );
         }
-        let area = mouse_area(
-            container(face)
-                .padding(Padding {
-                    left: 16.0,
-                    right: 8.0,
-                    top: 17.0,
-                    bottom: 0.0,
-                })
-                .height(HEADING)
-                .width(Length::Fill)
-                .align_y(Alignment::Center),
-        )
-        .interaction(iced::mouse::Interaction::Pointer)
-        .on_enter(Message::Side(Event::Point(id.clone(), true)))
-        .on_exit(Message::Side(Event::Point(id, false)));
+        let border = theme.surface_border("label", 0.0, 0.0, Color::TRANSPARENT);
+        let shadow = theme.surface_shadow("label", iced::Shadow::default());
+        let surface = yapfast_core::themes::package::art::ArtSurface::Label;
+        let decorated = self.cx.themes.decorates(&theme.id, surface);
+        let background = (!decorated)
+            .then(|| theme.surface_ground("label"))
+            .flatten();
+        let height = headers
+            .and_then(|headers| headers.height)
+            .unwrap_or(HEADING);
+        let body: Element<'a, Message> = container(face)
+            .padding(Padding {
+                left: headers.and_then(|headers| headers.inset).unwrap_or(16.0),
+                right: 8.0,
+                top: 17.0,
+                bottom: 0.0,
+            })
+            .height(height)
+            .width(Length::Fill)
+            .align_y(Alignment::Center)
+            .style(move |_| container::Style {
+                background,
+                border,
+                shadow,
+                ..Default::default()
+            })
+            .into();
+        let body: Element<'a, Message> = match headers.and_then(|headers| headers.frame.as_ref()) {
+            Some(frame) => match crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                frame,
+                super::width(self.cx.layout, theme),
+                height,
+            ) {
+                Some(art) => stack![art, body].width(Length::Fill).height(height).into(),
+                None => body,
+            },
+            None => body,
+        };
+        let body = crate::theme_art::surface(body, self.cx, surface);
+        let area = mouse_area(body)
+            .interaction(iced::mouse::Interaction::Pointer)
+            .on_enter(Message::Side(Event::Point(id.clone(), true)))
+            .on_exit(Message::Side(Event::Point(id, false)));
         // One that may be dragged folds on a click, not a press (`Drags`).
         let area = if place.is_none() {
             area.on_press(Message::Side(Event::Toggle(fold.to_owned())))
@@ -343,8 +518,8 @@ impl<'a> super::View<'a> {
         let mut face = row![
             self.cx.look.glyph(icon, 20, icon_ink),
             text(label)
-                .size(15)
-                .font(MEDIUM)
+                .size(theme.type_size("body", 15.0))
+                .font(theme.font("body", MEDIUM))
                 .color(ink)
                 .width(Length::Fill)
         ]
@@ -369,20 +544,119 @@ impl<'a> super::View<'a> {
     ) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
         let pointed = self.cx.pointed.side.as_deref() == Some(id.as_str());
+        let rows = self.cx.themes.channel_rows(&theme.id);
+        let frame = rows.and_then(|rows| {
+            if selected {
+                rows.selected.frame.as_ref()
+            } else {
+                None
+            }
+            .or_else(|| crate::theme_art::picked_tile(&rows.frame, &id))
+        });
+        let selected_plain =
+            frame.is_none() && rows.is_none_or(|rows| rows.selected.underline.is_none());
+        let selected_surface = yapfast_core::themes::package::art::ArtSurface::RowSelected;
+        let selected_decorated =
+            selected && selected_plain && self.cx.themes.decorates(&theme.id, selected_surface);
+        let event_highlighter = selected
+            && self
+                .cx
+                .themes
+                .event_effect(
+                    &theme.id,
+                    yapfast_core::themes::package::art::EventSlot::Select,
+                )
+                .is_some();
         let ground = if selected {
-            theme.active
+            if event_highlighter {
+                Color::TRANSPARENT
+            } else if selected_plain {
+                if selected_decorated {
+                    Color::TRANSPARENT
+                } else {
+                    theme.token_colour("row-selected", theme.active)
+                }
+            } else {
+                Color::TRANSPARENT
+            }
         } else if pointed {
-            theme.hover
+            match rows.and_then(|rows| rows.hover_ground).unwrap_or_else(|| {
+                if rows.is_some_and(|rows| !rows.frame.is_empty()) {
+                    yapfast_core::themes::lists::HoverGround::None
+                } else {
+                    yapfast_core::themes::lists::HoverGround::Hover
+                }
+            }) {
+                yapfast_core::themes::lists::HoverGround::None => Color::TRANSPARENT,
+                yapfast_core::themes::lists::HoverGround::Hover => theme.hover,
+                yapfast_core::themes::lists::HoverGround::RowHover => theme.row_hover,
+            }
         } else {
             Color::TRANSPARENT
         };
-        let body = container(face)
-            .padding([0, 8])
+        let mut border = theme.surface_border("row", 6.0, 0.0, Color::TRANSPARENT);
+        border.radius = theme.row_radius(6.0).into();
+        let shadow = theme.surface_shadow("row", iced::Shadow::default());
+        let inset = self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .and_then(|rows| rows.inset)
+            .unwrap_or(8.0);
+        let body: Element<'a, Message> = container(face)
+            .padding([0.0, inset])
             .height(height)
             .width(Length::Fill)
             .align_y(Alignment::Center)
             .clip(true)
-            .style(move |_| rounded(ground, 6));
+            .style(move |_| container::Style {
+                background: Some(ground.into()),
+                border,
+                shadow,
+                ..Default::default()
+            })
+            .into();
+        let mut body = iced::widget::stack![body]
+            .width(Length::Fill)
+            .height(height);
+        if let Some(frame) = frame
+            && let Some(art) = crate::theme_art::tile_art_opacity(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                frame,
+                super::width(self.cx.layout, theme),
+                height,
+                if pointed && !selected {
+                    rows.and_then(|rows| rows.hover_frame_opacity)
+                        .unwrap_or(1.0)
+                } else {
+                    1.0
+                },
+            )
+        {
+            body = iced::widget::stack![art, body]
+                .width(Length::Fill)
+                .height(height);
+        }
+        if selected
+            && let Some(after) = rows.and_then(|rows| rows.selected.after.as_ref())
+            && let Some(art) = crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                after,
+                super::width(self.cx.layout, theme),
+                height,
+            )
+        {
+            body = body.push(art);
+        }
+        let body: Element<'a, Message> = body.into();
+        let body = if selected && selected_plain {
+            crate::theme_art::surface(body, self.cx, selected_surface)
+        } else {
+            body
+        };
+        let body = crate::theme_effects::selected_row(body, self.cx, selected);
         let area = mouse_area(body)
             .interaction(iced::mouse::Interaction::Pointer)
             .on_enter(Message::Side(Event::Point(id.clone(), true)))
@@ -481,6 +755,7 @@ impl<'a> super::View<'a> {
             return self.dm_row(room);
         }
         let theme = self.cx.look.theme;
+        let list = self.cx.themes.channel_rows(&theme.id);
         let pointed = self.cx.pointed.side.as_deref() == Some(room.id.as_str());
         let (ink, opacity) = self.row_ink(room, pointed);
         // While a drag is on, rows it can't land among dim.
@@ -492,25 +767,145 @@ impl<'a> super::View<'a> {
         } else {
             (ink, opacity)
         };
-        let mut face = row![].spacing(8).align_y(Alignment::Center);
+        let icon_size = list.and_then(|rows| rows.icon.size).unwrap_or(20.0);
+        let icon_gap = list.and_then(|rows| rows.icon.gap).unwrap_or(8.0);
+        let mut face = row![].spacing(icon_gap).align_y(Alignment::Center);
+        if room.selected
+            && let Some(prefix_art) = list.and_then(|rows| rows.selected.prefix_art.as_ref())
+            && let Some(prefix) = crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                prefix_art,
+                icon_size,
+                icon_size,
+            )
+        {
+            face = face.push(prefix);
+        } else if room.selected
+            && let Some(prefix) = list
+                .map(|rows| rows.selected.prefix.as_str())
+                .filter(|prefix| !prefix.is_empty())
+        {
+            let colour = list
+                .and_then(|rows| rows.selected.prefix_colour)
+                .map(crate::themes::argb)
+                .unwrap_or(ink);
+            face = face.push(text(prefix.to_owned()).size(icon_size).color(colour));
+        }
         if !room.thread {
-            let icon_ink = if room.selected {
+            let stock_icon = if room.selected {
                 theme.text
             } else if room.unread {
                 theme.secondary
             } else {
                 theme.faint
             };
-            face = face.push(self.cx.look.glyph(room.icon, 20, faded(icon_ink, opacity)));
+            let icon_ink = list.map_or(stock_icon, |rows| {
+                if rows.icon.follow_ink {
+                    ink
+                } else if room.selected {
+                    rows.icon
+                        .selected
+                        .map(crate::themes::argb)
+                        .unwrap_or(stock_icon)
+                } else if pointed {
+                    rows.icon
+                        .hover
+                        .map(crate::themes::argb)
+                        .unwrap_or(stock_icon)
+                } else {
+                    rows.icon
+                        .colour
+                        .map(crate::themes::argb)
+                        .unwrap_or(stock_icon)
+                }
+            });
+            face = face.push(self.cx.look.glyph(
+                room.icon,
+                icon_size.round() as u32,
+                faded(icon_ink, opacity),
+            ));
         }
-        let name = elide(room.name.as_str()).size(15).font(MEDIUM).color(ink);
-        face = face.push(column![name].width(Length::Fill));
+        let marked = self.cx.themes.marked(
+            &theme.id,
+            yapfast_core::themes::chrome::Place::Channel,
+            &room.name,
+        );
+        let name = crate::themes::list_case(list.and_then(|rows| rows.case), &marked);
+        let name = elide(name.into_owned())
+            .size(theme.type_size("body", list.and_then(|rows| rows.size).unwrap_or(15.0)))
+            .font(theme.font("body", MEDIUM))
+            .color(ink);
+        let mut name = column![name].width(Length::Fill);
+        if room.selected
+            && let Some(underline) = list.and_then(|rows| rows.selected.underline)
+        {
+            name = name.spacing(underline.offset).push(bar(
+                crate::themes::argb(underline.colour),
+                Length::Fill,
+                underline.width,
+            ));
+        }
+        face = face.push(name);
         if let Some(started) = room.started {
             let lasted = yapfast_core::clock::lasted(started, self.cx.minute);
-            face = face.push(text(lasted).size(12).color(theme.muted));
+            face = face.push(
+                text(lasted)
+                    .size(theme.type_size("small", 12.0))
+                    .font(theme.font("small", crate::fonts::REGULAR))
+                    .color(theme.muted),
+            );
+        }
+        if room.voice
+            && let Some(meta) = list.map(|rows| &rows.meta)
+            && !meta.voice.is_empty()
+        {
+            let count = room.people.len().to_string();
+            let words = yapfast_core::themes::chrome::fill(&meta.voice, &[("n", count.as_str())]);
+            face = face.push(
+                text(words)
+                    .size(meta.size.unwrap_or_else(|| theme.type_size("small", 11.0)))
+                    .font(theme.font("small", crate::fonts::REGULAR))
+                    .color(meta.colour.map(crate::themes::argb).unwrap_or(theme.muted)),
+            );
         }
         if !room.badge.is_empty() {
-            face = face.push(count_pill(theme, &room.badge, ROW_COUNT, None));
+            let badge = list.map(|rows| rows.meta.badge).unwrap_or_default();
+            face = face.push(themed_count_pill(theme, &room.badge, badge));
+        } else if room.unread
+            && list.and_then(|rows| rows.meta.unread)
+                == Some(yapfast_core::themes::lists::UnreadMark::Badge)
+        {
+            let badge = list.map(|rows| rows.meta.badge).unwrap_or_default();
+            face = face.push(themed_count_pill(theme, "•", badge));
+        } else if room.unread
+            && list.and_then(|rows| rows.meta.unread)
+                == Some(yapfast_core::themes::lists::UnreadMark::Glyph)
+            && let Some(glyph) = list.and_then(|rows| rows.meta.unread_glyph.as_ref())
+        {
+            let side = list.and_then(|rows| rows.meta.size).unwrap_or(11.0);
+            match glyph {
+                yapfast_core::themes::lists::Glyph::Text(glyph) => {
+                    face = face.push(
+                        text(glyph.clone()).size(side).color(
+                            list.and_then(|rows| rows.meta.colour)
+                                .map(crate::themes::argb)
+                                .unwrap_or(theme.muted),
+                        ),
+                    );
+                }
+                yapfast_core::themes::lists::Glyph::Art(art) => {
+                    if let Some(art) = crate::theme_art::tile_art(
+                        self.cx,
+                        yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                        art,
+                        side,
+                        side,
+                    ) {
+                        face = face.push(art);
+                    }
+                }
+            }
         }
         // A voice channel's chat opens without joining it, from a button
         // shown under the pointer or while it's selected, as in Discord.
@@ -534,7 +929,7 @@ impl<'a> super::View<'a> {
         let row = self.row_face(
             room.id.clone(),
             face.into(),
-            room.row_height(),
+            room.row_height(theme),
             room.selected,
             (!dragged).then_some(message),
             Some(room.id.clone()),
@@ -557,7 +952,7 @@ impl<'a> super::View<'a> {
     /// selected or pointed at.
     pub(super) fn row_ink(self, room: &Room, pointed: bool) -> (Color, f32) {
         let theme = self.cx.look.theme;
-        let ink = if room.locked {
+        let stock = if room.locked {
             if room.selected {
                 theme.muted
             } else {
@@ -570,6 +965,25 @@ impl<'a> super::View<'a> {
         } else {
             theme.muted
         };
+        let ink = self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .and_then(|rows| {
+                if room.muted && !room.selected && !pointed {
+                    rows.ink.muted
+                } else if room.selected {
+                    rows.ink.selected
+                } else if pointed {
+                    rows.ink.hover
+                } else if room.unread {
+                    rows.ink.unread
+                } else {
+                    rows.ink.read
+                }
+            })
+            .map(crate::themes::argb)
+            .unwrap_or(stock);
         let opacity = if room.muted && !room.selected && !pointed {
             0.5
         } else {

@@ -63,8 +63,11 @@ pub struct Room {
 
 impl Room {
     /// The row's own height, without the people under it.
-    pub(super) fn row_height(&self) -> f32 {
-        if self.direct { DM_ROW } else { ROW }
+    pub(super) fn row_height(&self, theme: &crate::theme::Theme) -> f32 {
+        theme
+            .spacing()
+            .channel_row_height
+            .unwrap_or(if self.direct { DM_ROW } else { ROW })
     }
 }
 
@@ -113,16 +116,17 @@ impl SideRow {
     }
 
     /// The row's height, its gap after included.
-    pub fn height(&self) -> f32 {
-        GAP + match self {
-            SideRow::Screens { .. } => 6.0 + ROW + GAP + ROW + 6.0,
+    pub fn height(&self, theme: &crate::theme::Theme, gap: f32) -> f32 {
+        let row = theme.spacing().channel_row_height.unwrap_or(ROW);
+        gap + match self {
+            SideRow::Screens { .. } => 6.0 + row + GAP + row + 6.0,
             SideRow::DmHeading => 40.0,
-            SideRow::Browse { .. } => 6.0 + ROW + 6.0,
+            SideRow::Browse { .. } => 6.0 + row + 6.0,
             SideRow::Pinned => 36.0,
             SideRow::PinnedEnd => 9.0,
             SideRow::Heading { .. } => HEADING,
             SideRow::Room(room) => {
-                room.row_height()
+                room.row_height(theme)
                     + if room.people.is_empty() {
                         0.0
                     } else {

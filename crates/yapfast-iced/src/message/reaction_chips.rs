@@ -108,10 +108,24 @@ pub(super) fn reactions<'a>(
         } else {
             text(reaction.key.as_str()).color(theme.text).into()
         };
+        let count_words = reaction.count.to_string();
+        let count_words = ctx.themes.label(
+            &theme.id,
+            yapfast_core::themes::chrome::Label::Reaction,
+            count_words.clone(),
+            &[("n", count_words.as_str())],
+        );
+        let count_font = ctx
+            .themes
+            .chrome(&theme.id)
+            .and_then(|chrome| chrome.font)
+            .map_or("body", yapfast_core::themes::package::Role::name);
         let chip = container(
             row![
                 face,
-                text(reaction.count.to_string()).font(BOLD).color(count)
+                text(count_words)
+                    .font(theme.font(count_font, BOLD))
+                    .color(count)
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -176,24 +190,29 @@ pub(super) fn reaction_tip<'a>(
         Some(picture) => Pic::square(picture, 32.0).into(),
         None => text(key.to_owned()).size(26).into(),
     };
-    Some(
-        container(
-            row![
-                face,
-                text(words)
-                    .size(14)
-                    .font(MEDIUM)
-                    .color(theme.text)
-                    .width(Length::Shrink)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        )
-        .padding(16)
-        .max_width(288)
-        .style(controls::tip_style(theme))
-        .into(),
+    let tip = container(
+        row![
+            face,
+            text(words)
+                .size(14)
+                .font(MEDIUM)
+                .color(theme.text)
+                .width(Length::Shrink)
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
     )
+    .padding(16)
+    .max_width(288)
+    .style(controls::tip_style(theme));
+    Some(controls::themed_outline(
+        tip,
+        theme,
+        "tooltip",
+        theme.line,
+        1.0,
+        theme.surface_radius("tooltip", 6.0),
+    ))
 }
 
 #[cfg(test)]

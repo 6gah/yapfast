@@ -10,7 +10,7 @@ use yapfast_core::chat::{self, Attachment, ChatMessage, Placement};
 use crate::{
     app::Message,
     controls::placed,
-    fonts::MEDIUM,
+    fonts::{MEDIUM, REGULAR},
     media::{self, Fit, Gallery, Shot},
     pictures::Icon,
     style::rounded,
@@ -301,12 +301,18 @@ pub fn file_card<'a>(
     };
     let mut words = column![
         text(attachment.name.as_str())
-            .font(MEDIUM)
+            .size(theme.type_size("body", 14.0))
+            .font(theme.font("body", MEDIUM))
             .color(theme.text)
             .wrapping(text::Wrapping::None)
     ];
     if !detail.is_empty() {
-        words = words.push(text(detail).size(12).color(theme.muted));
+        words = words.push(
+            text(detail)
+                .size(theme.type_size("small", 12.0))
+                .font(theme.font("small", REGULAR))
+                .color(theme.muted),
+        );
     }
     let card = row![
         ctx.look.glyph(Icon::File, FILE_ICON, theme.accent),

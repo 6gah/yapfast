@@ -77,6 +77,9 @@ pub struct Header {
     /// Add people: to a DM (true) or a group.
     pub add_people: Option<bool>,
     pub members_available: bool,
+    /// How many members the selected room reports, for theme chrome that
+    /// writes the count beside its topic.
+    pub members_n: u64,
     pub members: String,
     pub profile_available: bool,
     pub search: Option<String>,
@@ -142,6 +145,7 @@ pub fn header(state: &AppState, was: &Header, link: u32) -> Header {
         add_people: (state.discord_online && state.dm_that(|can| can.group_dms).is_some())
             .then_some(room.person.is_some()),
         members_available: state.lists_members(),
+        members_n: room.members,
         members: match room.members {
             _ if room.forum => String::new(),
             0 => "Members".to_owned(),
@@ -209,6 +213,7 @@ fn dot(theme: &crate::theme::Theme) -> Element<'static, Message> {
 pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
     let header = ctx.header;
     let theme = ctx.look.theme;
+    let header_ink = theme.surface_text("header").unwrap_or(theme.text);
     let mut head = row![].spacing(10).align_y(Alignment::Center);
     if header.direct {
         head = head.push(
@@ -226,10 +231,17 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
         head = head
             .push(ctx.look.glyph(icon, ROOM_ICON, theme.muted))
             .push(
-                button(text(name.as_str()).size(16).font(BOLD))
-                    .padding(0)
-                    .on_press(Message::Side(crate::sidebar::Event::Select(id.clone())))
-                    .style(controls::ink_style(theme.secondary, theme.text)),
+                button(crate::theme_effects::label(
+                    ctx,
+                    yapfast_core::themes::package::art::TextRole::Headings,
+                    name.clone(),
+                    theme.header_size(16.0),
+                    theme.header_font(BOLD),
+                    theme.secondary,
+                ))
+                .padding(0)
+                .on_press(Message::Side(crate::sidebar::Event::Select(id.clone())))
+                .style(controls::ink_style(theme.secondary, theme.text)),
             )
             .push(ctx.look.glyph(Icon::ChevronRight, 16, theme.faint));
     }
@@ -237,13 +249,19 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
         head = head.push(ctx.look.glyph(icon, ROOM_ICON, theme.muted));
     }
     let fills = header.topic.is_none() && header.activity.is_empty();
-    let name = container(
-        text(header.name.as_str())
-            .size(16)
-            .font(BOLD)
-            .color(theme.text)
-            .wrapping(text::Wrapping::None),
-    )
+    let header_name = ctx.themes.marked(
+        &theme.id,
+        yapfast_core::themes::chrome::Place::Header,
+        &header.name,
+    );
+    let name = container(crate::theme_effects::label(
+        ctx,
+        yapfast_core::themes::package::art::TextRole::Headings,
+        theme.heading(&header_name).into_owned(),
+        theme.header_size(16.0),
+        theme.header_font(BOLD),
+        header_ink,
+    ))
     .clip(true);
     head = head.push(if fills {
         name.width(Length::Fill)
@@ -254,7 +272,7 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
         // A click shows it in full under the line, as Discord does;
         // its links open from there.
         let line = iced::widget::mouse_area(
-            container(topic_line(ctx, topic))
+            container(labelled_topic_line(ctx, topic))
                 .width(Length::Fill)
                 .clip(true),
         )
@@ -275,12 +293,47 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
             .width(Length::Fill),
         );
     }
+    if !header.direct
+        && header.members_n > 0
+        && let Some((template, role)) = ctx.themes.chrome(&theme.id).and_then(|chrome| {
+            chrome
+                .labels
+                .get(&yapfast_core::themes::chrome::Label::MemberCount)
+                .map(|template| {
+                    (
+                        template,
+                        chrome
+                            .font
+                            .map_or("small", yapfast_core::themes::package::Role::name),
+                    )
+                })
+        })
+    {
+        let count = header.members_n.to_string();
+        let words = yapfast_core::themes::chrome::fill(template, &[("n", count.as_str())]);
+        head = head.push(
+            text(words)
+                .size(theme.type_size(role, 14.0))
+                .font(theme.font(role, MEDIUM))
+                .color(theme.muted)
+                .wrapping(text::Wrapping::None),
+        );
+    }
     head = head.extend(header_buttons(ctx));
+    let border = theme.surface_border("header", 0.0, 0.0, iced::Color::TRANSPARENT);
+    let shadow = theme.surface_shadow("header", iced::Shadow::default());
+    let background = theme.surface_ground("header");
     container(head)
         .padding([0, 16])
         .width(Length::Fill)
         .height(HEIGHT)
         .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            background,
+            border,
+            shadow,
+            ..Default::default()
+        })
         .into()
 }
 
@@ -297,7 +350,45 @@ fn topic_line<'a>(ctx: crate::ctx::Ctx<'a>, topic: &'a Body) -> Element<'a, Mess
         .unlined(yapfast_core::emoji::card::LINK)
         .size(14.0, 18.0)
         .color(ink)
+        .light(crate::theme_effects::text_light(
+            ctx,
+            yapfast_core::themes::package::art::TextRole::Body,
+        ))
         .starts(false)
+        .into()
+}
+
+/// The topic with an installed package's safe text before and after its
+/// `{topic}` placeholder. The markdown body itself stays the same selectable
+/// piece, so links and mentions keep Wired's behaviour.
+fn labelled_topic_line<'a>(ctx: crate::ctx::Ctx<'a>, topic: &'a Body) -> Element<'a, Message> {
+    let theme = ctx.look.theme;
+    let Some((before, after)) = ctx
+        .themes
+        .chrome(&theme.id)
+        .and_then(|chrome| {
+            chrome
+                .labels
+                .get(&yapfast_core::themes::chrome::Label::Topic)
+        })
+        .and_then(|template| template.split_once("{topic}"))
+    else {
+        return topic_line(ctx, topic);
+    };
+    let role = ctx
+        .themes
+        .chrome(&theme.id)
+        .and_then(|chrome| chrome.font)
+        .map_or("small", yapfast_core::themes::package::Role::name);
+    let fixed = |words: &'a str| {
+        text(words)
+            .size(theme.type_size(role, 14.0))
+            .font(theme.font(role, MEDIUM))
+            .color(theme.muted)
+            .wrapping(text::Wrapping::None)
+    };
+    row![fixed(before), topic_line(ctx, topic), fixed(after)]
+        .align_y(Alignment::Center)
         .into()
 }
 

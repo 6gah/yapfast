@@ -464,10 +464,13 @@ fn account_card_sync(app: &mut App, link: u32) {
 /// outline, and the shadow of one that floats.
 pub(crate) fn frame_style(
     inks: look::Inks,
+    theme: &yapfast_iced_kit::theme::Theme,
     edge: iced::Color,
     radius: f32,
     floats: bool,
 ) -> impl Fn(&iced::Theme) -> container::Style {
+    let border = theme.surface_border("card", radius, if inks.themed { 0.0 } else { 1.0 }, edge);
+    let shadow = theme.surface_shadow("card", card_shadow());
     move |_| {
         let background: iced::Background = if inks.themed {
             iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
@@ -479,13 +482,9 @@ pub(crate) fn frame_style(
         };
         container::Style {
             background: Some(background),
-            border: iced::Border {
-                color: edge,
-                width: if inks.themed { 0.0 } else { 1.0 },
-                radius: radius.into(),
-            },
+            border,
             shadow: if floats {
-                card_shadow()
+                shadow
             } else {
                 iced::Shadow::default()
             },
@@ -603,7 +602,7 @@ pub fn profile_panel_view<'a>(ctx: crate::ctx::Ctx<'a>) -> Option<Element<'a, Me
         .width(Length::Fill)
         .height(Length::Fill)
         .clip(true)
-        .style(frame_style(inks, theme.edge, 8.0, false));
+        .style(frame_style(inks, theme, theme.edge, 8.0, false));
     let card = crate::profile::cosmetic::dressed(
         ctx,
         shown,

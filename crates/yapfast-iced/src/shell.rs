@@ -244,6 +244,10 @@ impl App {
             }
             Event::Resized(size) => {
                 self.shell.frame = size;
+                self.themes.resized((
+                    size.width.round().max(1.0) as u32,
+                    size.height.round().max(1.0) as u32,
+                ));
                 self.shell.sized = self.shell.sized.wrapping_add(1);
                 self.fit_zoom();
                 let fitted = crate::active_now::active_now_fits(self.ctx());

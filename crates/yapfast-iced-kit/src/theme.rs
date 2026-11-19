@@ -2,7 +2,302 @@
 //! with the colours worked out from them. The app fills one from a theme of
 //! its own ([`Theme::new`], then [`Theme::worked_out`]). See docs/themes.md.
 
-use iced::Color;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    sync::{Arc, LazyLock, RwLock},
+    time::Duration,
+};
+
+use iced::{Background, Border, Color, Font, Shadow, Vector, font::Weight};
+
+/// The non-colour parts of an installed theme. They are registered by the
+/// app when it resolves a package and looked up by [`Theme::id`], keeping
+/// [`Theme`] itself as the one, unchanged conversion boundary shared by the
+/// kit and the app.
+#[derive(Clone, Debug, Default)]
+pub struct Metrics {
+    /// Package colour tokens which cannot live in [`Theme`] without
+    /// changing its public shape. This includes the owner's extra colours
+    /// and the six surface brushes when they are gradients.
+    pub paints: HashMap<String, Background>,
+    /// Surfaces whose package has art or glass. The kit does not own those
+    /// images, but it uses this flag to leave the app-side decoration's
+    /// ground visible instead of covering it with Wired's fallback solid.
+    pub decorations: HashSet<String>,
+    pub shapes: HashMap<String, Shape>,
+    pub outlines: HashMap<String, Outline>,
+    pub radii: [Option<f32>; 3],
+    pub shadows: Option<Option<ShapeShadow>>,
+    pub outline_width: Option<f32>,
+    pub spacing: Spacing,
+    pub motion: Motion,
+    pub types: HashMap<String, TypeStyle>,
+    /// Settings → Appearance → Readable text. Reading roles retain their
+    /// stock face and weight while keeping the theme's size, as in Slint.
+    pub readable_text: bool,
+}
+
+/// One owner-theme text role after its optional font file has been loaded
+/// into iced's font system. Keeping this beside the other companion metrics
+/// preserves the public [`Theme`] shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TypeStyle {
+    pub font: Option<Font>,
+    pub size: Option<f32>,
+    pub weight: Option<i32>,
+    pub letter_spacing: Option<f32>,
+    pub uppercase: Option<bool>,
+    pub header_size: Option<f32>,
+    pub title_size: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutlineStroke {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Outline {
+    pub stroke: OutlineStroke,
+    pub dash: f32,
+    pub gap: f32,
+    pub width: Option<f32>,
+    pub colour: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Shape {
+    pub radius: Option<f32>,
+    pub border: Option<f32>,
+    pub border_colour: Option<Color>,
+    pub shadow: Option<ShapeShadow>,
+    pub inset: Option<(f32, f32)>,
+    pub inset_top: Option<f32>,
+    pub width: Option<f32>,
+    pub hover_width: Option<f32>,
+    pub ground: Option<Background>,
+    pub text: Option<Color>,
+    pub bar: Option<Background>,
+    pub bar_text: Option<Color>,
+    pub stripe: Option<Stripe>,
+    pub case: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stripe {
+    pub colour: Color,
+    pub channels: bool,
+    pub members: bool,
+    pub messages: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeShadow {
+    pub blur: f32,
+    pub x: f32,
+    pub y: f32,
+    pub colour: Color,
+}
+
+impl ShapeShadow {
+    fn iced(self) -> Shadow {
+        Shadow {
+            color: self.colour,
+            offset: Vector::new(self.x, self.y),
+            blur_radius: self.blur,
+        }
+    }
+}
+
+/// Gaps, row heights and pane widths. An absent value keeps Wired's stock
+/// metric at its call site.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Spacing {
+    pub message_gap: Option<f32>,
+    pub message_group_gap: Option<f32>,
+    pub channel_row_height: Option<f32>,
+    pub member_row_height: Option<f32>,
+    pub avatar_size: Option<f32>,
+    pub chat_padding: Option<f32>,
+    pub sidebar_width: Option<f32>,
+    pub members_width: Option<f32>,
+}
+
+/// Popup motion after the person's Performance and Reduce motion choices
+/// have been applied by the app.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Motion {
+    pub quick: Duration,
+    pub popup: Duration,
+    pub hover_in: Duration,
+    pub hover_out: Duration,
+    pub curve: Curve,
+    pub hover: Hover,
+    pub press: Press,
+    pub open: Transition,
+    pub close: Close,
+}
+
+impl Default for Motion {
+    fn default() -> Self {
+        Self {
+            quick: Duration::from_millis(120),
+            popup: Duration::from_millis(100),
+            hover_in: Duration::from_millis(120),
+            hover_out: Duration::from_millis(120),
+            curve: Curve::EaseOut,
+            hover: Hover::Fade,
+            press: Press::None,
+            open: Transition::Grow,
+            close: Close::Reverse,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Hover {
+    #[default]
+    Fade,
+    None,
+    Lift,
+    Glow,
+    Scale,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Press {
+    #[default]
+    None,
+    Scale,
+    Sink,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Curve {
+    Linear,
+    Ease,
+    EaseIn,
+    #[default]
+    EaseOut,
+    EaseInOut,
+    Spring,
+    Bounce,
+    Elastic,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Transition {
+    #[default]
+    Grow,
+    None,
+    Fade,
+    Zoom,
+    Pop,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Close {
+    #[default]
+    Reverse,
+    None,
+}
+
+impl Motion {
+    pub fn hover_duration(self, entering: bool) -> Duration {
+        if self.hover == Hover::None {
+            Duration::ZERO
+        } else if entering {
+            self.hover_in
+        } else {
+            self.hover_out
+        }
+    }
+
+    pub fn duration(self, closing: bool) -> Duration {
+        if self.open == Transition::None || (closing && self.close == Close::None) {
+            Duration::ZERO
+        } else {
+            self.popup
+        }
+    }
+
+    pub fn ease(self, t: f32) -> f32 {
+        let curve = if self.open == Transition::Pop {
+            Curve::Spring
+        } else {
+            self.curve
+        };
+        ease(curve, t)
+    }
+
+    pub fn scale(self, shown: f32) -> f32 {
+        match self.open {
+            Transition::None | Transition::Fade => 1.0,
+            Transition::Zoom => 0.95 + 0.05 * shown,
+            Transition::Grow | Transition::Pop => 0.8 + 0.2 * shown,
+        }
+    }
+
+    pub fn opacity(self, shown: f32) -> f32 {
+        if self.open == Transition::None {
+            f32::from(shown > 0.0)
+        } else {
+            shown
+        }
+    }
+
+    pub fn lift(self, hovered: f32, pressed: bool) -> f32 {
+        let up = if self.hover == Hover::Lift && !pressed {
+            -2.0 * hovered
+        } else {
+            0.0
+        };
+        let down = if self.press == Press::Sink && pressed {
+            1.0
+        } else {
+            0.0
+        };
+        up + down
+    }
+
+    pub fn grow(self, hovered: f32, pressed: bool) -> f32 {
+        if self.press == Press::Scale && pressed {
+            0.96
+        } else if self.hover == Hover::Scale {
+            1.0 + 0.04 * hovered
+        } else {
+            1.0
+        }
+    }
+
+    pub fn halo(self, hovered: f32, glow: Color) -> Shadow {
+        match self.hover {
+            Hover::Glow if hovered > 0.0 => Shadow {
+                color: Color {
+                    a: 0.55 * hovered,
+                    ..glow
+                },
+                blur_radius: 14.0 * hovered,
+                ..Shadow::default()
+            },
+            Hover::Lift if hovered > 0.0 => Shadow {
+                color: Color {
+                    a: 0.33 * hovered,
+                    ..Color::BLACK
+                },
+                offset: Vector::new(0.0, 3.0 * hovered),
+                blur_radius: 8.0 * hovered,
+            },
+            _ => Shadow::default(),
+        }
+    }
+}
+
+static METRICS: LazyLock<RwLock<HashMap<String, Arc<Metrics>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Calls `$then!` with the names of [`Theme`]'s own colours, so the app
 /// that fills them names each once too.
@@ -103,6 +398,361 @@ macro_rules! declare_theme {
 for_theme_colours!(declare_theme);
 
 impl Theme {
+    /// Registers the non-colour tokens resolved for this theme id. The app
+    /// calls this once while reading installed packages; built-in and custom
+    /// colour themes have no entry and therefore retain every Wired metric.
+    pub fn register_metrics(&self, metrics: Metrics) {
+        METRICS
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(self.id.clone(), Arc::new(metrics));
+    }
+
+    /// Removes companion tokens for `id`. The app calls this before making
+    /// a colour-only theme with an id that may previously have belonged to
+    /// a package (notably a deleted creator theme), so stale fonts, shapes
+    /// and spacing cannot leak into the replacement.
+    pub fn unregister_metrics(id: &str) {
+        METRICS
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+    }
+
+    fn metrics(&self) -> Option<Arc<Metrics>> {
+        METRICS
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.id)
+            .cloned()
+    }
+
+    /// A layout outline keyed by its owner-theme place name. This companion
+    /// registry keeps dashed rendering out of the public Theme struct.
+    pub fn outline(&self, place: &str) -> Option<Outline> {
+        self.metrics()
+            .and_then(|metrics| metrics.outlines.get(place).copied())
+    }
+
+    /// Whether the resolved owner package decorates this named surface with
+    /// art or glass. Built-in and colour-only themes return false.
+    pub fn decorated(&self, surface: &str) -> bool {
+        self.metrics()
+            .is_some_and(|metrics| metrics.decorations.contains(surface))
+    }
+
+    /// A stock radius through the package's small, medium or large class.
+    pub fn radius(&self, stock: f32) -> f32 {
+        let Some(metrics) = self.metrics() else {
+            return stock;
+        };
+        let [small, medium, large] = metrics.radii;
+        let class = if stock <= 0.0 {
+            None
+        } else if stock <= 4.0 {
+            small
+        } else if stock <= 8.0 {
+            medium
+        } else {
+            large
+        };
+        class.unwrap_or(stock)
+    }
+
+    pub fn surface_radius(&self, surface: &str, stock: f32) -> f32 {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.radius))
+            .unwrap_or_else(|| self.radius(stock))
+    }
+
+    /// A message band uses `row`'s radius, then `message`'s, matching the
+    /// owner theme's surface fallback.
+    pub fn row_radius(&self, stock: f32) -> f32 {
+        self.metrics()
+            .and_then(|metrics| {
+                metrics
+                    .shapes
+                    .get("row")
+                    .and_then(|shape| shape.radius)
+                    .or_else(|| metrics.shapes.get("message").and_then(|shape| shape.radius))
+            })
+            .unwrap_or_else(|| self.radius(stock))
+    }
+
+    /// An avatar's radius is a percentage of its side in theme packages.
+    pub fn avatar_radius(&self, size: f32, stock: f32) -> f32 {
+        let stock_percent = if size > 0.0 {
+            stock * 100.0 / size
+        } else {
+            0.0
+        };
+        let percent = self
+            .metrics()
+            .and_then(|metrics| metrics.shapes.get("avatar").and_then(|shape| shape.radius))
+            .unwrap_or(stock_percent);
+        size * percent / 100.0
+    }
+
+    /// A named surface's border, falling back to the exact border Wired
+    /// supplied. Theme border colours only count with an explicit width,
+    /// matching the owner theme resolver.
+    pub fn surface_border(
+        &self,
+        surface: &str,
+        stock_radius: f32,
+        stock_width: f32,
+        stock_colour: Color,
+    ) -> Border {
+        let metrics = self.metrics();
+        let shape = metrics
+            .as_ref()
+            .and_then(|metrics| metrics.shapes.get(surface));
+        let width = shape
+            .and_then(|shape| shape.border)
+            .or_else(|| {
+                metrics.as_ref().and_then(|metrics| {
+                    (stock_width > 0.0 && stock_width <= 1.0)
+                        .then_some(metrics.outline_width)
+                        .flatten()
+                })
+            })
+            .unwrap_or(stock_width);
+        let color = match shape.and_then(|shape| shape.border_colour) {
+            Some(colour) if shape.and_then(|shape| shape.border).is_some() => colour,
+            _ => stock_colour,
+        };
+        Border {
+            color,
+            width,
+            radius: self.surface_radius(surface, stock_radius).into(),
+        }
+    }
+
+    pub fn surface_shadow(&self, surface: &str, stock: Shadow) -> Shadow {
+        let Some(metrics) = self.metrics() else {
+            return stock;
+        };
+        if let Some(shadow) = metrics.shapes.get(surface).and_then(|shape| shape.shadow) {
+            return shadow.iced();
+        }
+        match metrics.shadows {
+            None => stock,
+            Some(None) => Shadow::default(),
+            Some(Some(shadow)) => shadow.iced(),
+        }
+    }
+
+    pub fn surface_inset(&self, surface: &str) -> Option<(f32, f32)> {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.inset))
+    }
+
+    /// Whether an installed package explicitly supplies this surface. This
+    /// matters for trim such as profile-card sections: stock draws only the
+    /// content, while a theme that names the surface adds the frame around
+    /// it even when that frame happens to be transparent.
+    pub fn has_surface(&self, surface: &str) -> bool {
+        self.metrics()
+            .is_some_and(|metrics| metrics.shapes.contains_key(surface))
+    }
+
+    pub fn surface_inset_top(&self, surface: &str) -> Option<f32> {
+        self.metrics().and_then(|metrics| {
+            metrics
+                .shapes
+                .get(surface)
+                .and_then(|shape| shape.inset_top)
+        })
+    }
+
+    pub fn surface_ground(&self, surface: &str) -> Option<Background> {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.ground))
+    }
+
+    /// A paint explicitly supplied by an installed package. Ordinary
+    /// colour themes return `None`, so every call site keeps Wired's exact
+    /// fallback. Surface wrappers use this for owner gradients and extra
+    /// grounds such as `members`, `account`, `composer`, `menu` and `code`.
+    pub fn package_paint(&self, token: &str) -> Option<Background> {
+        self.metrics()
+            .and_then(|metrics| metrics.paints.get(token).copied())
+    }
+
+    /// A package's explicit solid colour. Extra tokens are required to be
+    /// solid by the owner manifest checker.
+    pub fn package_colour(&self, token: &str) -> Option<Color> {
+        match self.package_paint(token) {
+            Some(Background::Color(colour)) => Some(colour),
+            _ => None,
+        }
+    }
+
+    pub fn token_colour(&self, token: &str, stock: Color) -> Color {
+        self.package_colour(token).unwrap_or(stock)
+    }
+
+    /// The effective background for an owner's surface token. An installed
+    /// package's explicit paint wins; otherwise the same Wired colour that
+    /// surface used before this port remains the fallback.
+    pub fn surface_paint(&self, token: &str) -> Background {
+        if let Some(paint) = self.package_paint(token) {
+            return paint;
+        }
+        match token {
+            "rail" => self.rail,
+            "sidebar" | "embed" | "popout" | "label" => self.sidebar,
+            "chat" | "members" | "header" | "aside" | "window" => self.chat,
+            "panel" | "account" | "code" | "settings" => self.panel,
+            "raised" | "card" | "dialog" | "toast" | "picker" | "card_over" => self.raised,
+            "accent" => self.accent,
+            "composer" => self.composer,
+            "menu" => self.menu,
+            "actions" => self.raised,
+            "row-selected" => self.active,
+            "tooltip" => self.tooltip,
+            "stage" | "call" => self.stage,
+            "sunken" | "lightbox" => self.sunken,
+            _ => Color::TRANSPARENT,
+        }
+        .into()
+    }
+
+    pub fn surface_text(&self, surface: &str) -> Option<Color> {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.text))
+    }
+
+    pub fn surface_bar(&self, surface: &str) -> Option<(Background, Option<Color>)> {
+        self.metrics().and_then(|metrics| {
+            let shape = metrics.shapes.get(surface)?;
+            shape.bar.map(|bar| (bar, shape.bar_text))
+        })
+    }
+
+    pub fn surface_stripe(&self, surface: &str) -> Option<Stripe> {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.stripe))
+    }
+
+    pub fn surface_case(&self, surface: &str) -> Option<u8> {
+        self.metrics()
+            .and_then(|metrics| metrics.shapes.get(surface).and_then(|shape| shape.case))
+    }
+
+    pub fn surface_words<'a>(&self, surface: &str, words: &'a str) -> Cow<'a, str> {
+        match self.surface_case(surface) {
+            Some(1) => Cow::Owned(words.to_lowercase()),
+            Some(2) => Cow::Owned(words.to_uppercase()),
+            _ => Cow::Borrowed(words),
+        }
+    }
+
+    pub fn surface_widths(&self, surface: &str) -> (Option<f32>, Option<f32>) {
+        self.metrics()
+            .and_then(|metrics| {
+                metrics
+                    .shapes
+                    .get(surface)
+                    .map(|shape| (shape.width, shape.hover_width))
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn spacing(&self) -> Spacing {
+        self.metrics()
+            .map_or_else(Spacing::default, |metrics| metrics.spacing)
+    }
+
+    pub fn motion(&self) -> Motion {
+        self.metrics()
+            .map_or_else(Motion::default, |metrics| metrics.motion)
+    }
+
+    /// A text role's face and weight. Readable text restores Wired's face
+    /// and weight for reading roles, while decorative headings, small text
+    /// and times continue to follow the package.
+    pub fn font(&self, role: &str, stock: Font) -> Font {
+        let Some(metrics) = self.metrics() else {
+            return stock;
+        };
+        if metrics.readable_text && matches!(role, "body" | "names" | "labels" | "code") {
+            return stock;
+        }
+        let Some(kind) = metrics.types.get(role) else {
+            return stock;
+        };
+        let face = kind.font.unwrap_or(stock);
+        Font {
+            weight: kind.weight.map_or(stock.weight, type_weight),
+            ..face
+        }
+    }
+
+    /// The open conversation's and server's names use headings normally,
+    /// but are reading text when Readable text is on.
+    pub fn header_font(&self, stock: Font) -> Font {
+        if self.metrics().is_some_and(|metrics| metrics.readable_text) {
+            stock
+        } else {
+            self.font("headings", stock)
+        }
+    }
+
+    pub fn type_size(&self, role: &str, stock: f32) -> f32 {
+        self.metrics()
+            .and_then(|metrics| metrics.types.get(role).and_then(|kind| kind.size))
+            .unwrap_or(stock)
+    }
+
+    pub fn header_size(&self, stock: f32) -> f32 {
+        self.metrics()
+            .and_then(|metrics| {
+                let kind = metrics.types.get("headings")?;
+                kind.header_size.or(kind.size)
+            })
+            .unwrap_or(stock)
+    }
+
+    pub fn title_size(&self, stock: f32) -> f32 {
+        self.metrics()
+            .and_then(|metrics| {
+                let kind = metrics.types.get("headings")?;
+                kind.title_size.or(kind.size)
+            })
+            .unwrap_or(stock)
+    }
+
+    pub fn heading<'a>(&self, words: &'a str) -> Cow<'a, str> {
+        if self.metrics().is_some_and(|metrics| {
+            metrics
+                .types
+                .get("headings")
+                .and_then(|kind| kind.uppercase)
+                .unwrap_or(false)
+        }) {
+            Cow::Owned(words.to_uppercase())
+        } else {
+            Cow::Borrowed(words)
+        }
+    }
+
+    /// Retained for renderers that gain letter-spacing support. iced 0.14's
+    /// ordinary text widget cannot consume it yet.
+    pub fn letter_spacing(&self, role: &str) -> f32 {
+        let Some(metrics) = self.metrics() else {
+            return 0.0;
+        };
+        if metrics.readable_text && matches!(role, "body" | "names" | "labels" | "code") {
+            return 0.0;
+        }
+        metrics
+            .types
+            .get(role)
+            .and_then(|kind| kind.letter_spacing)
+            .unwrap_or(0.0)
+    }
+
     /// The colours worked out from the others, once those are set.
     pub fn worked_out(self) -> Self {
         let dark = self.dark;
@@ -167,6 +817,73 @@ impl Theme {
     }
 }
 
+fn type_weight(weight: i32) -> Weight {
+    match (weight.clamp(100, 900) + 50) / 100 {
+        0 | 1 => Weight::Thin,
+        2 => Weight::ExtraLight,
+        3 => Weight::Light,
+        4 => Weight::Normal,
+        5 => Weight::Medium,
+        6 => Weight::Semibold,
+        7 => Weight::Bold,
+        8 => Weight::ExtraBold,
+        _ => Weight::Black,
+    }
+}
+
+/// The owner's named easing curves. Keeping this in the kit lets the popup
+/// widget consume a resolved motion without depending on yapfast-core.
+fn ease(curve: Curve, t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let cubic = |x1: f32, y1: f32, x2: f32, y2: f32, x: f32| {
+        let bezier = |a: f32, b: f32, t: f32| {
+            let u = 1.0 - t;
+            3.0 * u * u * t * a + 3.0 * u * t * t * b + t * t * t
+        };
+        let (mut low, mut high) = (0.0f32, 1.0f32);
+        for _ in 0..24 {
+            let middle = (low + high) / 2.0;
+            if bezier(x1, x2, middle) < x {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        bezier(y1, y2, (low + high) / 2.0)
+    };
+    match curve {
+        Curve::Linear => t,
+        Curve::Ease => cubic(0.25, 0.1, 0.25, 1.0, t),
+        Curve::EaseIn => cubic(0.42, 0.0, 1.0, 1.0, t),
+        Curve::EaseOut => cubic(0.0, 0.0, 0.58, 1.0, t),
+        Curve::EaseInOut => cubic(0.42, 0.0, 0.58, 1.0, t),
+        Curve::Spring => {
+            let (c1, c3) = (1.701_58, 2.701_58);
+            1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
+        }
+        Curve::Bounce => {
+            let (n, d) = (7.5625, 2.75);
+            if t < 1.0 / d {
+                n * t * t
+            } else if t < 2.0 / d {
+                let t = t - 1.5 / d;
+                n * t * t + 0.75
+            } else if t < 2.5 / d {
+                let t = t - 2.25 / d;
+                n * t * t + 0.9375
+            } else {
+                let t = t - 2.625 / d;
+                n * t * t + 0.984_375
+            }
+        }
+        Curve::Elastic if t == 0.0 || t == 1.0 => t,
+        Curve::Elastic => {
+            let c4 = std::f32::consts::TAU / 3.0;
+            2f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
+        }
+    }
+}
+
 /// An opaque colour as `0xrrggbb`, for the client's own pictures (icons,
 /// dots), which are drawn once per colour.
 pub fn rgb(color: Color) -> u32 {
@@ -193,5 +910,28 @@ pub fn mix(color: Color, other: Color, factor: f32) -> Color {
         g: lerp(color.g, other.g, channels),
         b: lerp(color.b, other.b, channels),
         a: lerp(color.a, other.a, factor),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unregistering_metrics_restores_wired_fallbacks() {
+        let theme = Theme::new("test:reused-metrics", true);
+        let mut metrics = Metrics::default();
+        metrics.shapes.insert(
+            "button".into(),
+            Shape {
+                radius: Some(19.0),
+                ..Shape::default()
+            },
+        );
+        theme.register_metrics(metrics);
+        assert_eq!(theme.surface_radius("button", 6.0), 19.0);
+
+        Theme::unregister_metrics(&theme.id);
+        assert_eq!(theme.surface_radius("button", 6.0), 6.0);
     }
 }

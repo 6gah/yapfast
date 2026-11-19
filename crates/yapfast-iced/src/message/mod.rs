@@ -10,20 +10,19 @@ use iced::{
     widget::{Space, button, column, container, mouse_area, row, span, stack, text},
 };
 use yapfast_core::chat::{self, ChatMessage, NoticeKind, Placement};
+use yapfast_core::themes::layout::MessageStyle;
 
 use crate::{
     app::{App, Message},
     controls::{self, placed},
-    fonts::{BOLD, ITALIC, MEDIUM, SEMIBOLD, shown_name, style_font},
+    fonts::{BOLD, ITALIC, MEDIUM, REGULAR, SEMIBOLD, shown_name, style_font},
     looks::{self, Chip},
     markdown::{FIRST_PART, Look},
     media::Gallery,
     pictures::{Face, Icon},
     piece::Piece,
     style::{CHIP, hex},
-    timeline::{
-        AUTHOR_GAP, AUTHOR_LINE, AVATAR, CONTENT_PAD, END_PAD, GUTTER, LINE_HEIGHT, RowLook,
-    },
+    timeline::{AUTHOR_GAP, AUTHOR_LINE, CONTENT_PAD, END_PAD, LINE_HEIGHT, RowLook},
     widgets::{Fold, RightPress},
 };
 
@@ -80,11 +79,13 @@ pub fn open_author(app: &mut App, index: usize) -> iced::Task<Message> {
     let (lane, _) = app.ctx().lane_place(index);
     // The avatar's top: moved down under a reply's line.
     let header = message.reply.is_some() || message.used.is_some();
+    let avatar = crate::timeline::avatar(&app.theme);
+    let gutter = crate::timeline::gutter(&app.theme);
     let y = app.ctx().row_body_top(index) + CONTENT_PAD + if header { 24.0 } else { 2.0 };
-    let x = lane.left + (GUTTER - AVATAR) / 2.0;
+    let x = lane.left + (gutter - avatar) / 2.0;
     let width = crate::profile::WIDTH;
-    let beside = if x + AVATAR + 8.0 + width <= app.window.width - 8.0 {
-        x + AVATAR + 8.0
+    let beside = if x + avatar + 8.0 + width <= app.window.width - 8.0 {
+        x + avatar + 8.0
     } else {
         (x - width - 8.0).max(8.0)
     };
@@ -130,6 +131,10 @@ pub fn message_content<'a>(
         return blocked_row(ctx, look);
     }
     let theme = ctx.look.theme;
+    let package_layout = ctx.themes.package_layout(&theme.id);
+    let message_style = package_layout
+        .and_then(|layout| layout.messages)
+        .unwrap_or(MessageStyle::Flat);
     let header = message.reply.is_some() || message.used.is_some();
     let mut content = column![].width(Length::Fill);
     if let Some(reply) = &message.reply {
@@ -137,7 +142,11 @@ pub fn message_content<'a>(
     } else if let Some(used) = &message.used {
         content = content.push(used_line(ctx, index, used));
     }
-    if look.first && message.notice.is_none() {
+    if look.first
+        && message.notice.is_none()
+        && message_style != MessageStyle::Irc
+        && !(message_style == MessageStyle::Bubbles && message.own)
+    {
         content = content.push(
             container(author_line(ctx, index, message)).padding(Padding::ZERO.bottom(AUTHOR_GAP)),
         );
@@ -146,7 +155,10 @@ pub fn message_content<'a>(
         content = content.push(
             row![
                 ctx.look.glyph(Icon::Forward, 16, theme.muted),
-                text("Forwarded").size(14).font(ITALIC).color(theme.muted)
+                text("Forwarded")
+                    .size(theme.type_size("body", 14.0))
+                    .font(theme.font("body", ITALIC))
+                    .color(theme.muted)
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -156,6 +168,11 @@ pub fn message_content<'a>(
         theme.muted
     } else if message.notice.is_some() {
         theme.secondary
+    } else if message_style == MessageStyle::Bubbles && message.own {
+        package_layout
+            .and_then(|layout| layout.bubbles.own_text)
+            .map(crate::themes::argb)
+            .unwrap_or(theme.on_accent)
     } else {
         theme.text
     };
@@ -183,7 +200,12 @@ pub fn message_content<'a>(
         content = content.push(thinking(ctx, message));
     }
     if message.edited && message.notice.is_none() && !editing {
-        content = content.push(text("(edited)").size(10).color(theme.muted));
+        content = content.push(
+            text("(edited)")
+                .size(theme.type_size("small", 10.0))
+                .font(theme.font("small", REGULAR))
+                .color(theme.muted),
+        );
     }
     let gallery = Gallery::of(
         &message.attachments,
@@ -265,24 +287,252 @@ pub fn message_content<'a>(
     if message.flags & EPHEMERAL != 0 {
         content = content.push(ephemeral_line(ctx, message));
     }
-    let gutter = gutter(ctx, index, message, look, header);
-    let shown = container(row![gutter, content].spacing(16))
-        .width(Length::Fill)
-        .padding(Padding {
-            top: CONTENT_PAD,
-            bottom: CONTENT_PAD,
-            left: (GUTTER - AVATAR) / 2.0,
-            right: if editing { 21.0 } else { END_PAD },
-        });
-    if !header {
-        return shown.into();
+    let avatars = package_layout.and_then(|layout| layout.chat_avatars) != Some(false);
+    let show_gutter = message.notice.is_some()
+        || (avatars
+            && message_style != MessageStyle::Irc
+            && !(message_style == MessageStyle::Bubbles && message.own));
+    let gutter = show_gutter.then(|| gutter(ctx, index, message, look, header));
+    let avatar = crate::timeline::avatar(theme);
+    let gutter_width = if show_gutter {
+        crate::timeline::gutter(theme)
+    } else {
+        0.0
+    };
+    let lane: Element<'a, Message> = match message_style {
+        MessageStyle::Irc if message.notice.is_none() => {
+            let time_width = package_layout
+                .and_then(|layout| layout.irc.time_width)
+                .unwrap_or(64.0);
+            let nick_width = package_layout
+                .and_then(|layout| layout.irc.nick_width)
+                .unwrap_or(112.0);
+            let separator = package_layout
+                .and_then(|layout| layout.irc.separator.clone())
+                .unwrap_or_default();
+            let rule = package_layout.and_then(|layout| layout.irc.rule) == Some(true);
+            let mut line = row![].spacing(6).align_y(Alignment::Start);
+            if time_width > 0.0 {
+                line = line.push(
+                    container(
+                        text(look.time.as_str())
+                            .size(theme.type_size("time", 12.0))
+                            .font(theme.font("time", MEDIUM))
+                            .color(theme.muted),
+                    )
+                    .width(time_width)
+                    .align_x(Alignment::End),
+                );
+            }
+            line = line.push(
+                container(
+                    ctx.person_name(
+                        message.author.as_str(),
+                        crate::people::NameInk::new(
+                            14.0,
+                            500,
+                            message.color.map_or(theme.text, crate::style::hex),
+                        )
+                        .key(message.sender.as_str()),
+                    ),
+                )
+                .width(nick_width)
+                .clip(true)
+                .align_x(Alignment::End),
+            );
+            if rule {
+                let separator = package_layout
+                    .and_then(|layout| layout.irc.separator.clone())
+                    .unwrap_or_else(|| "│".into());
+                if !separator.is_empty() {
+                    line = line.push(crate::theme_art::irc_rule(
+                        separator,
+                        text_size(ctx),
+                        LINE_HEIGHT,
+                        theme.font("body", REGULAR),
+                        theme.faint,
+                        content.into(),
+                    ));
+                } else {
+                    line = line.push(content);
+                }
+            } else {
+                if !separator.is_empty() {
+                    line = line.push(text(separator).size(text_size(ctx)).color(theme.faint));
+                }
+                line = line.push(content);
+            }
+            container(line)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top: CONTENT_PAD,
+                    bottom: CONTENT_PAD,
+                    left: END_PAD,
+                    right: if editing { 21.0 } else { END_PAD },
+                })
+                .into()
+        }
+        MessageStyle::Bubbles if message.notice.is_none() => {
+            let stock = yapfast_core::themes::layout::Bubbles::default();
+            let bubbles = package_layout.map_or(&stock, |layout| &layout.bubbles);
+            let (across, down) = bubbles
+                .padding
+                .unwrap_or(yapfast_core::themes::layout::BUBBLE_PADDING);
+            let background = if message.own {
+                bubbles
+                    .own
+                    .as_ref()
+                    .map(crate::themes::paint)
+                    .unwrap_or_else(|| theme.accent.into())
+            } else {
+                bubbles
+                    .other
+                    .as_ref()
+                    .map(crate::themes::paint)
+                    .unwrap_or_else(|| theme.raised.into())
+            };
+            let radius = bubbles
+                .radius
+                .unwrap_or_else(|| theme.surface_radius("card", 12.0));
+            let gel = if message.own {
+                &bubbles.own_gel
+            } else {
+                &bubbles.other_gel
+            };
+            let padded = container(content).padding([down, across]);
+            let mut bubble: Element<'a, Message> = if gel.is_empty() {
+                padded
+                    .style(move |_| container::Style {
+                        background: Some(background),
+                        border: iced::Border {
+                            radius: radius.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            } else {
+                crate::theme_art::gel_bubble(padded, background, radius, gel.clone())
+            };
+            if let Some(share) = bubbles.max_width {
+                let lane = package_layout
+                    .and_then(|layout| layout.chat_max_width)
+                    .unwrap_or(960.0);
+                bubble = container(bubble)
+                    .max_width((lane * share / 100.0).max(120.0))
+                    .into();
+            }
+            let bubble = crate::theme_art::outlined(
+                bubble,
+                ctx,
+                yapfast_core::themes::layout::BorderPlace::Message,
+                "card",
+                radius,
+                0.0,
+                theme.line,
+            );
+            let aligned = if message.own {
+                row![Space::new().width(Length::Fill), bubble]
+            } else if let Some(gutter) = gutter {
+                row![gutter, bubble].spacing(16)
+            } else {
+                row![bubble, Space::new().width(Length::Fill)]
+            };
+            container(aligned)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top: CONTENT_PAD,
+                    bottom: CONTENT_PAD,
+                    left: (gutter_width - avatar).max(0.0) / 2.0,
+                    right: if editing { 21.0 } else { END_PAD },
+                })
+                .into()
+        }
+        MessageStyle::Cards if message.notice.is_none() => {
+            let stock = yapfast_core::themes::layout::Cards::default();
+            let cards = package_layout.map_or(&stock, |layout| &layout.cards);
+            let ground = cards
+                .ground
+                .map(crate::themes::argb)
+                .unwrap_or(theme.raised);
+            let padding = cards.padding.unwrap_or(12.0);
+            let mut border = theme.surface_border("card", 0.0, 0.0, iced::Color::TRANSPARENT);
+            border.radius = theme.surface_radius("card", 8.0).into();
+            let outline_fallback = border;
+            if theme.outline("card").is_some() {
+                border.width = 0.0;
+            }
+            let shadow = cards.shadow.as_ref().map_or_else(
+                || theme.surface_shadow("card", iced::Shadow::default()),
+                |shadow| iced::Shadow {
+                    color: crate::themes::argb(shadow.colour),
+                    offset: iced::Vector::new(shadow.x, shadow.y),
+                    blur_radius: shadow.blur,
+                },
+            );
+            let mut card_content = row![];
+            if let Some(gutter) = gutter {
+                card_content = card_content.push(gutter);
+            }
+            card_content = card_content.push(content);
+            let card = container(card_content.spacing(if show_gutter { 16 } else { 0 }))
+                .padding(padding)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(ground.into()),
+                    border,
+                    shadow,
+                    ..Default::default()
+                });
+            let card = crate::theme_art::outlined(
+                card,
+                ctx,
+                yapfast_core::themes::layout::BorderPlace::Card,
+                "card",
+                8.0,
+                outline_fallback.width,
+                outline_fallback.color,
+            );
+            container(card)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top: CONTENT_PAD,
+                    bottom: CONTENT_PAD,
+                    left: END_PAD,
+                    right: if editing { 21.0 } else { END_PAD },
+                })
+                .into()
+        }
+        _ => {
+            let mut flat = row![];
+            if let Some(gutter) = gutter {
+                flat = flat.push(gutter);
+            }
+            flat = flat.push(content);
+            container(flat.spacing(if show_gutter { 16 } else { 0 }))
+                .width(Length::Fill)
+                .padding(Padding {
+                    top: CONTENT_PAD,
+                    bottom: CONTENT_PAD,
+                    left: (gutter_width - avatar).max(0.0) / 2.0,
+                    right: if editing { 21.0 } else { END_PAD },
+                })
+                .into()
+        }
+    };
+    if !header || message_style != MessageStyle::Flat {
+        return lane;
     }
     // The spine from the line above down to the avatar, over the
     // gutter's edge and the space after it.
     let spine = ctx.look.glyph(Icon::ReplySpine, SPINE, theme.reply_spine);
     stack![
-        shown,
-        placed(spine, (GUTTER - AVATAR) / 2.0 + 19.0, CONTENT_PAD + 11.0)
+        lane,
+        placed(
+            spine,
+            (gutter_width - avatar) / 2.0 + avatar / 2.0 - 1.0,
+            CONTENT_PAD + 11.0,
+        )
     ]
     .into()
 }
@@ -292,12 +542,14 @@ pub fn message_content<'a>(
 /// with Show it.
 fn blocked_row<'a>(ctx: crate::ctx::Ctx<'a>, look: &RowLook) -> Element<'a, Message> {
     let theme = ctx.look.theme;
+    let avatar = crate::timeline::avatar(theme);
+    let gutter_width = crate::timeline::gutter(theme);
     let mut content = column![].width(Length::Fill);
     let mut gutter =
         stack![
             Space::new()
-                .width(AVATAR)
-                .height(if look.first { AVATAR } else { 0.0 })
+                .width(avatar)
+                .height(if look.first { avatar } else { 0.0 })
         ];
     if look.first {
         content = content.push(
@@ -311,7 +563,7 @@ fn blocked_row<'a>(ctx: crate::ctx::Ctx<'a>, look: &RowLook) -> Element<'a, Mess
             .padding(Padding::ZERO.bottom(AUTHOR_GAP)),
         );
         gutter = gutter.push(placed(
-            ctx.avatar(None, "?", AVATAR, AVATAR / 2.0, 1.0),
+            ctx.avatar(None, "?", avatar, avatar / 2.0, 1.0),
             0.0,
             2.0,
         ));
@@ -333,12 +585,12 @@ fn blocked_row<'a>(ctx: crate::ctx::Ctx<'a>, look: &RowLook) -> Element<'a, Mess
         .height(LINE_HEIGHT)
         .align_y(Alignment::Center),
     );
-    container(row![container(gutter).width(AVATAR), content].spacing(16))
+    container(row![container(gutter).width(avatar), content].spacing(16))
         .width(Length::Fill)
         .padding(Padding {
             top: CONTENT_PAD,
             bottom: CONTENT_PAD,
-            left: (GUTTER - AVATAR) / 2.0,
+            left: (gutter_width - avatar) / 2.0,
             right: END_PAD,
         })
         .into()
@@ -375,12 +627,13 @@ fn gutter<'a>(
     header: bool,
 ) -> Element<'a, Message> {
     let theme = ctx.look.theme;
+    let avatar = crate::timeline::avatar(theme);
     let mut layers =
         stack![
             Space::new()
-                .width(AVATAR)
+                .width(avatar)
                 .height(if look.first && message.notice.is_none() {
-                    if header { 64.0 } else { AVATAR }
+                    if header { avatar + 24.0 } else { avatar }
                 } else {
                     0.0
                 })
@@ -404,7 +657,7 @@ fn gutter<'a>(
             .cosmetics
             .decoration(message.decoration.as_deref());
         let face = ctx.face(
-            Face::new(message.avatar.as_deref(), &message.author, AVATAR).decoration(
+            Face::new(message.avatar.as_deref(), &message.author, avatar).decoration(
                 decoration,
                 ctx.pointed.message.as_deref() == Some(message.item.as_str()),
             ),
@@ -428,18 +681,18 @@ fn gutter<'a>(
         layers = layers.push(placed(
             container(
                 text(clock)
-                    .size(12)
-                    .font(MEDIUM)
+                    .size(theme.type_size("time", 12.0))
+                    .font(theme.font("time", MEDIUM))
                     .color(theme.muted)
                     .wrapping(text::Wrapping::None),
             )
-            .width(AVATAR)
+            .width(avatar)
             .align_x(Alignment::End),
             0.0,
             4.0,
         ));
     }
-    container(layers).width(AVATAR).into()
+    container(layers).width(avatar).into()
 }
 
 /// What a right click on a message's author (their avatar or name) opens:
@@ -479,7 +732,8 @@ fn reply_line<'a>(ctx: crate::ctx::Ctx<'a>, reply: &'a chat::Reply) -> Element<'
             )))
             .push(
                 text(format!("@{}", reply.author))
-                    .size(14)
+                    .size(theme.type_size("names", 14.0))
+                    .font(theme.font("names", MEDIUM))
                     .color(reply.color.map_or(theme.secondary, hex))
                     .wrapping(text::Wrapping::None),
             );
@@ -488,7 +742,8 @@ fn reply_line<'a>(ctx: crate::ctx::Ctx<'a>, reply: &'a chat::Reply) -> Element<'
     line = line.push(
         container(
             text(one_line)
-                .size(13)
+                .size(theme.type_size("small", 13.0))
+                .font(theme.font("small", REGULAR))
                 .color(theme.secondary)
                 .wrapping(text::Wrapping::None),
         )
@@ -523,8 +778,8 @@ fn used_line<'a>(
     use crate::timeline::Event;
     let theme = ctx.look.theme;
     let user = text(used.user.as_str())
-        .size(14)
-        .font(MEDIUM)
+        .size(theme.type_size("names", 14.0))
+        .font(theme.font("names", MEDIUM))
         .color(used.color.map_or(theme.secondary, hex));
     let user: Element<'a, Message> = if used.sender.is_empty() {
         user.into()
@@ -536,7 +791,9 @@ fn used_line<'a>(
             .on_press(Message::Timeline(Event::OpenPerson(id.to_owned())))
             .into()
     };
-    let command = text(used.name.as_str()).size(14).font(MEDIUM);
+    let command = text(used.name.as_str())
+        .size(theme.type_size("body", 14.0))
+        .font(theme.font("body", MEDIUM));
     let command: Element<'a, Message> = match used.slash.as_deref() {
         // Written in the channel's composer, so not from the thread beside.
         Some(slash)
@@ -555,13 +812,21 @@ fn used_line<'a>(
     let mut line = row![
         ctx.face(Face::new(used.avatar.as_deref(), &used.user, HEADER_AVATAR)),
         user,
-        text("used").size(14).color(theme.muted),
+        text("used")
+            .size(theme.type_size("small", 14.0))
+            .font(theme.font("small", REGULAR))
+            .color(theme.muted),
         command,
     ]
     .spacing(4)
     .align_y(Alignment::Center);
     if let Some(target) = used.target.as_deref().filter(|target| !target.is_empty()) {
-        line = line.push(text(format!("on @{target}")).size(14).color(theme.muted));
+        line = line.push(
+            text(format!("on @{target}"))
+                .size(theme.type_size("small", 14.0))
+                .font(theme.font("small", REGULAR))
+                .color(theme.muted),
+        );
     }
     container(line)
         .height(HEADER_LINE)
@@ -572,7 +837,10 @@ fn used_line<'a>(
 
 /// Messages' text size, as Messages' settings chose it.
 pub fn text_size(ctx: crate::ctx::Ctx<'_>) -> f32 {
-    crate::settings::message_size(ctx.layout.prefs.text_size)
+    ctx.look.theme.type_size(
+        "body",
+        crate::settings::message_size(ctx.layout.prefs.text_size),
+    )
 }
 
 /// When the message at `index` was sent, on the clock Messages'
@@ -591,32 +859,52 @@ fn author_line<'a>(
 ) -> Element<'a, Message> {
     let theme = ctx.look.theme;
     let cosmetics = ctx.state.cosmetics;
-    let style = looks::name_look(
+    let mut style = looks::name_look(
         cosmetics.style(message.style.as_deref()),
         &message.author,
         ctx.in_server,
         theme.dark,
     );
+    let content = ctx
+        .themes
+        .content(&theme.id, ctx.layout.theme_content.contains(&theme.id));
+    if content
+        .is_some_and(|content| content.names.styles == yapfast_core::themes::content::Follow::Theme)
+    {
+        style = None;
+    }
     let color = message.color.map_or(theme.text, hex);
     // Out of a server a whole style shows; its first colour stands in
     // for the effect in a timeline row.
-    let color = match &style {
+    let mut color = match &style {
         Some(style) if !ctx.in_server => style.colors.first().map_or(color, |rgb| hex(*rgb)),
         _ => color,
     };
+    if let Some(names) = content.map(|content| &content.names) {
+        color = crate::people::themed_name_colour(names, Some(&message.sender), color, theme);
+    }
+    let author = ctx.themes.marked(
+        &theme.id,
+        yapfast_core::themes::chrome::Place::Author,
+        &message.author,
+    );
     let name = Piece::new(
         vec![
             span(
                 shown_name(
-                    &message.author,
+                    &author,
                     style.as_ref().and_then(crate::looks::NameLook::font),
                 )
                 .into_owned(),
             )
-            .font(style_font(
-                style.as_ref().and_then(crate::looks::NameLook::font),
-                500,
-            )),
+            .font({
+                let stock = style_font(style.as_ref().and_then(crate::looks::NameLook::font), 500);
+                if style.is_some() {
+                    stock
+                } else {
+                    theme.font("names", stock)
+                }
+            }),
         ],
         index,
         0,
@@ -624,13 +912,17 @@ fn author_line<'a>(
         Message::Select,
     )
     .item(Some(ctx.row_item(index)))
-    .size(text_size(ctx), AUTHOR_LINE)
+    .size(theme.type_size("names", text_size(ctx)), AUTHOR_LINE)
     .color(color)
+    .light(crate::theme_effects::text_light(
+        ctx,
+        yapfast_core::themes::package::art::TextRole::Names,
+    ))
     .starts(false)
     .selection(
         ctx.selected(index, 0),
         ctx.lanes.timeline.selecting,
-        theme.selection,
+        theme.token_colour("selection", theme.selection),
     );
     let name = mouse_area(name)
         .interaction(iced::mouse::Interaction::Pointer)
@@ -673,20 +965,27 @@ fn author_line<'a>(
     if message.bot {
         line = line.push(ctx.bot_tag(1.0));
     }
+    let sent = ctx
+        .themes
+        .marked_time(&theme.id, sent_time(ctx, index, message));
     let time = Piece::new(
-        vec![span(sent_time(ctx, index, message))],
+        vec![span(sent).font(theme.font("time", REGULAR))],
         index,
         1,
         Message::Link,
         Message::Select,
     )
     .item(Some(ctx.row_item(index)))
-    .size(text_size(ctx) - 4.0, 16.0)
+    .size(theme.type_size("time", text_size(ctx) - 4.0), 16.0)
     .color(theme.muted)
+    .light(crate::theme_effects::text_light(
+        ctx,
+        yapfast_core::themes::package::art::TextRole::Labels,
+    ))
     .selection(
         ctx.selected(index, 1),
         ctx.lanes.timeline.selecting,
-        theme.selection,
+        theme.token_colour("selection", theme.selection),
     );
     line.push(time).height(AUTHOR_LINE).into()
 }
@@ -740,13 +1039,18 @@ fn thread_chip<'a>(ctx: crate::ctx::Ctx<'a>, thread: &'a chat::ThreadLink) -> El
     let mut words = row![
         crate::elide::elide(thread.name.as_str())
             .size(text_size(ctx))
-            .font(BOLD)
+            .font(theme.font("body", BOLD))
             .color(theme.text),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
     if !detail.is_empty() {
-        words = words.push(text(detail).size(14).color(theme.link));
+        words = words.push(
+            text(detail)
+                .size(theme.type_size("small", 14.0))
+                .font(theme.font("small", REGULAR))
+                .color(theme.link),
+        );
     }
     let face = row![
         ctx.look.glyph(Icon::Thread, 18, theme.muted),
@@ -790,14 +1094,14 @@ fn delivery_line<'a>(
         chat::Delivery::Failed => ("Not sent. The server refused this message.", true, true),
     };
     let failed = message.delivery == chat::Delivery::Failed;
-    let mut line =
-        row![
-            text(words)
-                .size(13)
-                .color(if failed { theme.danger } else { theme.muted })
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
+    let mut line = row![
+        text(words)
+            .size(theme.type_size("small", 13.0))
+            .font(theme.font("small", REGULAR))
+            .color(if failed { theme.danger } else { theme.muted })
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
     let item = &message.item;
     if retry {
         line = line.push(
@@ -828,19 +1132,25 @@ fn delivery_line<'a>(
 fn ephemeral_line<'a>(ctx: crate::ctx::Ctx<'a>, message: &ChatMessage) -> Element<'a, Message> {
     let theme = ctx.look.theme;
     let preview = ctx.state.preview;
-    let dismiss = button(text("Dismiss message").size(12))
-        .padding(0)
-        .on_press_maybe(
-            (!preview)
-                .then(|| Message::Write(crate::composer::Event::Dismiss(message.item.clone()))),
-        )
-        .style(controls::ink_style(
-            if preview { theme.muted } else { theme.link },
-            theme.text,
-        ));
+    let dismiss = button(
+        text("Dismiss message")
+            .size(theme.type_size("small", 12.0))
+            .font(theme.font("small", REGULAR)),
+    )
+    .padding(0)
+    .on_press_maybe(
+        (!preview).then(|| Message::Write(crate::composer::Event::Dismiss(message.item.clone()))),
+    )
+    .style(controls::ink_style(
+        if preview { theme.muted } else { theme.link },
+        theme.text,
+    ));
     row![
         ctx.look.glyph(Icon::Eye, 16, theme.muted),
-        text("Only you can see this ·").size(12).color(theme.muted),
+        text("Only you can see this ·")
+            .size(theme.type_size("small", 12.0))
+            .font(theme.font("small", REGULAR))
+            .color(theme.muted),
         dismiss,
     ]
     .spacing(4)
@@ -852,5 +1162,5 @@ fn ephemeral_line<'a>(ctx: crate::ctx::Ctx<'a>, message: &ChatMessage) -> Elemen
 /// the gutter and the room kept for its actions.
 pub fn content_width_of(ctx: crate::ctx::Ctx<'_>, row: usize) -> f32 {
     let (lane, _) = ctx.lane_place(row);
-    (lane.width - GUTTER - END_PAD).max(0.0)
+    (lane.width - crate::timeline::gutter(ctx.look.theme) - END_PAD).max(0.0)
 }

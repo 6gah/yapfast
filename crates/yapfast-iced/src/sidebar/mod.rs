@@ -7,8 +7,8 @@
 
 use crate::widgets::scroll_view;
 use iced::{
-    Color, Element, Length, Point, Task,
-    widget::{column, container, scrollable::Viewport, stack},
+    Alignment, Color, Element, Length, Padding, Point, Task,
+    widget::{Space, column, container, row, scrollable::Viewport, stack},
 };
 use yapfast_core::application::{Action, DmScreen, Navigation};
 
@@ -158,17 +158,30 @@ const LEAST: f32 = 180.0;
 const MOST: f32 = 380.0;
 
 /// The sidebar's width: as its edge was dragged, else [`WIDTH`].
-pub fn width(layout: &crate::layout::Layout) -> f32 {
+pub fn width(layout: &crate::layout::Layout, theme: &crate::theme::Theme) -> f32 {
     layout
         .sidebar_width
+        .or(theme.spacing().sidebar_width)
         .map_or(WIDTH, |width| width.clamp(LEAST, MOST))
 }
 
 /// `width` within what the sidebar may take: 180 to 380 px, and no more
 /// than leaves the conversation 420 px.
 fn room(app: &App, width: f32) -> f32 {
-    let beside = app.window.width - crate::conversation::chat_right(app);
-    let most = app.window.width - crate::rail::WIDTH - crate::thread::CHAT_KEPT - beside;
+    let package = app.themes.package_layout(&app.theme.id);
+    let navigation = if crate::conversation::navigation_right(package) {
+        crate::conversation::themed_navigation(
+            &app.layout,
+            &app.theme,
+            package,
+            app.themes.chrome(&app.theme.id),
+        )
+    } else {
+        0.0
+    };
+    let beside = app.window.width - crate::conversation::chat_right(app) - navigation;
+    let most =
+        app.window.width - crate::rail::themed_width(package) - crate::thread::CHAT_KEPT - beside;
     width.clamp(LEAST, most.clamp(LEAST, MOST))
 }
 /// Its header, the line under it included.
@@ -181,7 +194,7 @@ const HEADING: f32 = 38.0;
 /// A row's own small button: a voice channel's Open chat, a category's "+".
 const CHAT_BUTTON: f32 = 24.0;
 const PERSON: f32 = 30.0;
-const GAP: f32 = 2.0;
+pub(crate) const GAP: f32 = 2.0;
 /// The space the list leaves after its last row.
 const END: f32 = 12.0;
 /// The list's inset from the sidebar's sides.
@@ -264,13 +277,20 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
             return app.ask();
         }
         Event::Resize(by) => {
-            let from = *app.sidebar.drag.get_or_insert(width(&app.layout));
+            let from = *app
+                .sidebar
+                .drag
+                .get_or_insert(width(&app.layout, &app.theme));
             app.layout.sidebar_width = Some(room(app, from + by));
             return Task::none();
         }
         Event::Resized => {
             app.sidebar.drag = None;
-            crate::layout::store(app.client.root(), "sidebar_width", width(&app.layout));
+            crate::layout::store(
+                app.client.root(),
+                "sidebar_width",
+                width(&app.layout, &app.theme),
+            );
             return app.ask();
         }
         Event::ResetWidth => {
@@ -327,7 +347,19 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
                 app.win.menu = None;
                 return Task::none();
             }
-            let at = Point::new(crate::rail::WIDTH + INSET, HEADER - 4.0);
+            let package = app.themes.package_layout(&app.theme.id);
+            let left = if crate::conversation::navigation_right(package) {
+                app.window.width
+                    - crate::conversation::themed_navigation(
+                        &app.layout,
+                        &app.theme,
+                        package,
+                        app.themes.chrome(&app.theme.id),
+                    )
+            } else {
+                crate::rail::resolved_width(package, app.themes.chrome(&app.theme.id))
+            };
+            let at = Point::new(left + INSET, HEADER - 4.0);
             return crate::place_menus::open_place_menu(app, &server, at, true);
         }
         Event::Invite => {
@@ -345,7 +377,19 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
                 return Task::none();
             };
             let top = app.sidebar.top_height() - EVENTS_ROW;
-            let at = Point::new(crate::rail::WIDTH + INSET, top + EVENTS_ROW - INSET);
+            let package = app.themes.package_layout(&app.theme.id);
+            let left = if crate::conversation::navigation_right(package) {
+                app.window.width
+                    - crate::conversation::themed_navigation(
+                        &app.layout,
+                        &app.theme,
+                        package,
+                        app.themes.chrome(&app.theme.id),
+                    )
+            } else {
+                crate::rail::resolved_width(package, app.themes.chrome(&app.theme.id))
+            };
+            let at = Point::new(left + INSET, top + EVENTS_ROW - INSET);
             return crate::place_menus::open_events_menu(app, &server, at);
         }
         Event::Menu(id, at) => {
@@ -370,14 +414,80 @@ pub fn update(app: &mut App, event: Event) -> Task<Message> {
 }
 
 impl<'a> View<'a> {
+    fn server_rule(self, rule: yapfast_core::themes::lists::Rule) -> Element<'a, Message> {
+        use yapfast_core::themes::lists::RuleStyle;
+
+        let colour = crate::themes::argb(rule.colour);
+        let available = (width(self.cx.layout, self.cx.look.theme) - rule.inset * 2.0).max(1.0);
+        let line: Element<'a, Message> = match rule.style {
+            RuleStyle::Solid => controls::bar(colour, Length::Fill, rule.width).into(),
+            RuleStyle::Dashed | RuleStyle::Dotted => {
+                let segment = if rule.style == RuleStyle::Dotted {
+                    rule.width
+                } else {
+                    rule.width * 4.0
+                };
+                let gap = rule.width * 2.0;
+                let count = (available / (segment + gap)).ceil().max(1.0) as usize;
+                let mut pieces = row![].spacing(gap);
+                for _ in 0..count {
+                    pieces = pieces.push(
+                        container(Space::new())
+                            .width(segment)
+                            .height(rule.width)
+                            .style(move |_| {
+                                rounded(
+                                    colour,
+                                    if rule.style == RuleStyle::Dotted {
+                                        rule.width / 2.0
+                                    } else {
+                                        0.0
+                                    },
+                                )
+                            }),
+                    );
+                }
+                container(pieces).width(Length::Fill).clip(true).into()
+            }
+        };
+        container(line)
+            .padding(Padding {
+                left: rule.inset,
+                right: rule.inset,
+                ..Padding::ZERO
+            })
+            .width(Length::Fill)
+            .height(rule.width)
+            .into()
+    }
+
     pub fn sidebar_view(self) -> Element<'a, Message> {
         let theme = self.cx.look.theme;
-        let total: f32 = self.s.rows.iter().map(SideRow::height).sum::<f32>() + END - GAP;
+        let gap = self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .and_then(|rows| rows.gap)
+            .unwrap_or(GAP);
+        let reserve = self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .map_or(0.0, |rows| rows.reserve);
+        let total: f32 = self
+            .s
+            .rows
+            .iter()
+            .map(|row| row.height(theme, gap))
+            .sum::<f32>()
+            + END
+            - gap
+            + reserve;
         let viewport = self.s.scroll;
         let mut rows = Rows::new(total);
         let mut top = 0.0;
         for (index, row) in self.s.rows.iter().enumerate() {
-            let height = row.height();
+            let height = row.height(theme, gap);
             let at = top;
             top += height;
             if at + height < viewport.offset - MARGIN
@@ -387,6 +497,22 @@ impl<'a> View<'a> {
             }
             let place = self.s.places.of_row.get(index).copied().flatten();
             rows.push(key(&row.key()), at, height, self.side_row(row, place));
+        }
+        if reserve > 0.0
+            && let Some(foot) = self
+                .cx
+                .themes
+                .channel_rows(&theme.id)
+                .and_then(|rows| rows.foot.as_ref())
+            && let Some(art) = crate::theme_art::tile_art(
+                self.cx,
+                yapfast_core::themes::package::art::ArtSurface::Sidebar,
+                foot,
+                width(self.cx.layout, theme),
+                reserve,
+            )
+        {
+            rows.push(key("theme:channel-foot"), total - reserve, reserve, art);
         }
         let list = scroll_view(rows)
             .id(LIST)
@@ -405,14 +531,34 @@ impl<'a> View<'a> {
                 controls::placed(
                     container(ghost).padding([0.0, INSET]),
                     0.0,
-                    y.clamp(0.0, (viewport.height - ROW).max(0.0))
+                    y.clamp(
+                        0.0,
+                        (viewport.height - theme.spacing().channel_row_height.unwrap_or(ROW))
+                            .max(0.0),
+                    )
                 )
             ]
             .into(),
             None => list,
         };
         let ground = theme.sidebar;
-        let mut top = column![self.side_header_view()];
+        let header = self.side_header_view();
+        let header: Element<'a, Message> = match self
+            .cx
+            .themes
+            .channel_rows(&theme.id)
+            .and_then(|rows| rows.server_rule)
+        {
+            Some(rule) => stack![
+                header,
+                container(self.server_rule(rule))
+                    .height(Length::Fill)
+                    .align_y(Alignment::End)
+            ]
+            .into(),
+            None => header,
+        };
+        let mut top = column![header];
         if let Some(boosts) = self
             .s
             .header
@@ -430,7 +576,7 @@ impl<'a> View<'a> {
             top = top.push(self.events_row(events));
         }
         container(column![top, list])
-            .width(width(self.cx.layout))
+            .width(width(self.cx.layout, self.cx.look.theme))
             .height(Length::Fill)
             .clip(true)
             .style(move |_| rounded(ground, corners([12.0, 0.0, 0.0, 0.0])))

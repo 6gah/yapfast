@@ -54,12 +54,17 @@ impl App {
         let mut subscriptions = vec![
             keys,
             fonts,
+            iced::system::theme_changes().map(Message::SystemTheme),
             drops,
             sizes,
             zooms,
             crate::window_bar::history_keys(),
             Self::shell_subscription(),
         ];
+        if self.themes.trial().is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(250)).map(Message::ThemeTrialTick));
+        }
         // A look at the releases every six hours while the check is on.
         if self.layout.prefs.check_for_updates {
             subscriptions.push(

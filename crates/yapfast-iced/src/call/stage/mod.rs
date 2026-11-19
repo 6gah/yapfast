@@ -588,6 +588,7 @@ fn stage_tile(
             tile
         }
     };
+    tile = tile.surface(theme, "call");
     if full {
         tile = tile.square();
     }

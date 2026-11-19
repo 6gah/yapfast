@@ -549,7 +549,9 @@ fn plus(app: &mut App) -> Task<Message> {
         });
     }
     let at = iced::Point::new(
-        crate::conversation::chat_left(app) + GUTTER + 10.0,
+        crate::conversation::chat_left(app)
+            + app.theme.spacing().chat_padding.unwrap_or(GUTTER)
+            + 10.0,
         composer_top(app) - 8.0,
     );
     app.win.menu = Some(Menu::new(at, rows).anchor(crate::widgets::Anchor::Bottom));
@@ -582,6 +584,12 @@ fn send(app: &mut App) -> Task<Message> {
         }
     }
     app.client.dispatch(Action::Send);
+    app.cue(yapfast_core::themes::media::SoundSlot::Send);
+    app.themes.particle_event(
+        &app.theme.id,
+        yapfast_core::themes::package::art::Trigger::MessageSent,
+        None,
+    );
     app.composer.suggest.clear(&mut app.client);
     Task::batch([to_end, app.sync()])
 }
@@ -797,8 +805,9 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
             composer_box(ctx, &look)
         });
     }
+    let gutter = ctx.look.theme.spacing().chat_padding.unwrap_or(GUTTER);
     let foot: Element<'a, Message> = if look.hint.is_empty() {
-        Space::new().height(GUTTER).into()
+        Space::new().height(gutter).into()
     } else {
         let muted = ctx.look.theme.muted;
         let mut line = row![].spacing(6).align_y(Alignment::Center);
@@ -813,7 +822,7 @@ pub fn view<'a>(ctx: crate::ctx::Ctx<'a>) -> Element<'a, Message> {
             .into()
     };
     container(compose.push(foot))
-        .padding(Padding::ZERO.left(GUTTER).right(GUTTER))
+        .padding(Padding::ZERO.left(gutter).right(gutter))
         .into()
 }
 
@@ -834,6 +843,16 @@ fn composer_box<'a>(ctx: crate::ctx::Ctx<'a>, look: &Look) -> Element<'a, Messag
             _ => format!("Message {name}"),
         }
     };
+    let placeholder = if replying {
+        placeholder
+    } else {
+        ctx.themes.label(
+            &theme.id,
+            yapfast_core::themes::chrome::Label::Composer,
+            placeholder,
+            &[("channel", name.as_str())],
+        )
+    };
     let commanding = ctx.state.command_draft().is_some();
     let placeholder = crate::commands::command_placeholder(ctx).unwrap_or(placeholder);
     let field = Field::new(
@@ -845,7 +864,7 @@ fn composer_box<'a>(ctx: crate::ctx::Ctx<'a>, look: &Look) -> Element<'a, Messag
             ground: iced::Color::TRANSPARENT,
             text: theme.text,
             placeholder: theme.placeholder,
-            selection: theme.selection,
+            selection: theme.token_colour("selection", theme.selection),
         },
     )
     .padding(Padding {
@@ -939,18 +958,40 @@ fn composer_box<'a>(ctx: crate::ctx::Ctx<'a>, look: &Look) -> Element<'a, Messag
     } else {
         theme.outline_field
     };
+    let surface_radius = theme.surface_radius("composer", 10.0);
     let radius = if replying {
-        corners([0.0, 0.0, 10.0, 10.0])
+        corners([0.0, 0.0, surface_radius, surface_radius])
     } else {
-        10.0.into()
+        surface_radius.into()
     };
+    let mut border = theme.surface_border("composer", 10.0, 1.0, edge);
+    border.radius = radius;
+    let outline_fallback = border;
+    if theme.outline("composer").is_some() {
+        border.width = 0.0;
+    }
+    let shadow = theme.surface_shadow("composer", iced::Shadow::default());
     let mut inside = column![];
     if let Some(tray) = crate::uploads::tray(ctx) {
         inside = inside.push(tray);
     }
     let frame = container(inside.push(line))
         .width(Length::Fill)
-        .style(move |_| crate::style::outlined(ground, edge, radius));
+        .style(move |_| container::Style {
+            background: Some(ground.into()),
+            border,
+            shadow,
+            ..Default::default()
+        });
+    let frame = crate::theme_art::outlined(
+        frame,
+        ctx,
+        yapfast_core::themes::layout::BorderPlace::Composer,
+        "composer",
+        10.0,
+        outline_fallback.width,
+        outline_fallback.color,
+    );
     Popover::new(
         frame,
         crate::suggest::suggestions_view(ctx, Writing::Draft),
