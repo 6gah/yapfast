@@ -61,7 +61,8 @@ cargo ...` with `--profile fast` (`CLAUDE.md:3`, `AGENTS.md:1`).
 7. [discord-client-and-fake.md](discord-client-and-fake.md) — the service,
    the gateway and API, and the fake server's env file.
 8. [plugins.md](plugins.md) — **there is no plugin system on this
-   branch**; where it would go, and how to tell if one arrives.
+   branch**; the map is of upstream's `feat/plugins`, where it lives, and
+   how a plugin is installed, updated and extended.
 9. [testing-tools.md](testing-tools.md) — the display, the control file,
    the fake, the measurement harnesses, the UI tests.
 10. [build-packaging.md](build-packaging.md) — profiles, native code, Nix,

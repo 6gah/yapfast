@@ -1,68 +1,168 @@
 # Plugins
 
-Written from commit `4682fe5`.
+Written from commit `a0c1d53` on upstream's `feat/plugins` branch
+(`upstream/feat/plugins`), not from this branch: none of the crates below
+exist on `private-devtools`. Paths are as that branch has them.
 
-## There is no plugin system on this branch
+## What it is
 
-Searched, not assumed: `plugin` appears nowhere in `crates/yapfast-iced/src`,
-nowhere in `crates/yapfast-iced-kit/src`, and nowhere in `docs/` except one
-passing use in `docs/building.md:1`. There is no `plugins` crate in the
-workspace (`Cargo.toml:9`), no plugin page in Settings
-(`crates/yapfast-iced/src/settings/mod.rs:78` lists every section: Account,
-Voice, Messages, Notifications, Discord, Sounds, Advanced, Appearance,
-Themes, Games, Keybinds, About), and the test display's page names follow
-that list (`goto.rs:140`).
+A plugin is a WebAssembly module plus a manifest, run in a helper process
+and reached from the app through one pipe. Five parts:
 
-So `goto settings/plugins` fails here on purpose, and says which pages
-exist. Do not go looking for a registry, a host or a sandbox: there isn't
-one to find:
+- **`crates/yapfast-plugin-api`** — the wire types and the contract: the
+  manifest, the hooks, the capabilities, the guest's imports
+  (`crates/yapfast-plugin-api/src/lib.rs:1`). Serde and nothing else,
+  because both processes build it (`lib.rs:5`). A change here is an ABI
+  change; a breaking one raises `API_VERSION` (`lib.rs:31`), which is the
+  manifest's `api` field.
+- **`crates/yapfast-plugin-host`** — the helper binary: the shallow fetch
+  with gitoxide, the Extism sandbox, the scheduler, the pipe
+  (`crates/yapfast-plugin-host/src/lib.rs:1`).
+- **`crates/yapfast-plugins`** — everything that knows about plugins and
+  nothing about Yapfast: manifests into UI, settings schemas, the store,
+  the marketplace, installing, and the bridge to the helper
+  (`crates/yapfast-plugins/src/lib.rs:1`). It never names the app's state,
+  a message or a window; the tap points live in the core (`lib.rs:8`).
+- **`crates/yapfast-core/src/plugins/`** — the tap points and what the app
+  hands across: `state.rs:1`, `world.rs:1`, `dress.rs:1`, `audio.rs:1`,
+  `tasks.rs:1`.
+- **`pdk/`** — the plugin development kits: Rust (`pdk/rust/src/lib.rs:1`),
+  C (`pdk/c/yapfast.h:1`), Zig (`pdk/zig/src/yapfast.zig:1`), TinyGo
+  (`pdk/tinygo/template/plugin.go:1`), AssemblyScript
+  (`pdk/assemblyscript/assembly/index.ts:1`), each with a template and a
+  `shout` example.
 
-- `grep -r plugin crates/yapfast-iced crates/yapfast-core/src` — nothing.
-- `git branch -r | grep plugins` — the work exists **upstream only**, on
-  branches like `origin/feat/plugins`, `origin/feat/plugins-ui`,
-  `origin/plugins-audit`, `origin/plugins-dropdown-parts`,
-  `origin/plugins-touchup` and `origin/themes-0.4-nopluginsready`. It is
-  not on `main` here, nor on `origin/themes-inspector`, which this branch
-  starts from.
+The app's side is a Settings section, `Section::Plugins`
+(`crates/yapfast-iced/src/settings/mod.rs:88`), with its page
+(`crates/yapfast-plugins/src/page.rs:1`), behind `#[cfg(feature =
+"plugins")]` (`crates/yapfast-iced/src/settings/mod.rs:50`).
 
-## The nearest thing that exists: themes
+## Key files, one line each
 
-Themes are the extension point this tree has: a package may add pictures,
-sounds, layers, art, motion and a `layout.json`, and its named parts may
-restyle any element (`docs/themes.md:1`, [themes.md](themes.md)). A theme
-cannot run code: everything it says is data, checked before it loads
-(`crates/yapfast-core/src/themes/check.rs:1`).
+| File | What it is |
+|---|---|
+| `crates/yapfast-plugin-api/src/manifest.rs:1` | `yapfast-plugin.json`: what a plugin is, needs and adds; strict JSON |
+| `crates/yapfast-plugin-api/src/hook.rs:1` | The hooks a plugin intercepts, and the deadline each has |
+| `crates/yapfast-plugin-api/src/capability.rs:1` | `Capability`, `Permissions`, `HostPattern`: what a plugin may do |
+| `crates/yapfast-plugin-api/src/limits.rs:1` | Every size and count a plugin is held to |
+| `crates/yapfast-plugin-api/src/guest.rs:1` | The imports a guest calls, as the wire sees them |
+| `crates/yapfast-plugin-host/src/fetch/git.rs:1` | One plugin out of one commit: a shallow gitoxide clone, files read from the tree |
+| `crates/yapfast-plugin-host/src/fetch/url.rs:1` | `Source`: the URL a plugin is installed from, `#path=` and all |
+| `crates/yapfast-plugin-host/src/runtime/` | Extism in `module.rs`, the host functions in `host.rs`, what stays loaded in `kept.rs` |
+| `crates/yapfast-plugin-host/src/sandbox.rs:1` | What the module may reach, and the caps around it |
+| `crates/yapfast-plugin-host/src/scheduler.rs:1` | Whose turn it is, and for how long |
+| `crates/yapfast-plugin-host/src/pipe.rs:1` | The line protocol between the app and the helper |
+| `crates/yapfast-plugins/src/store.rs:1` | `<data>/plugins`: the lock file, the content-addressed store, a plugin's data |
+| `crates/yapfast-plugins/src/installing.rs:1` | The fetch's report into a review and a package the store writes |
+| `crates/yapfast-plugins/src/marketplace.rs:1` | The registry repository, its entries, and what browsing gives the page |
+| `crates/yapfast-plugins/src/settings.rs:1` | A plugin's `settings` array into a schema, its values, its form |
+| `crates/yapfast-plugins/src/permissions.rs:1` | What the person allowed, read from `grants.json` |
+| `crates/yapfast-plugins/src/tweaks.rs:1` | The switches a plugin flips in Yapfast's own behaviour |
+| `crates/yapfast-plugins/src/bridge/mod.rs:1` | The app's end of the pipe: sessions, supervision, the wire |
+| `crates/yapfast-plugins/src/ui.rs:1` | What a manifest may say about the interface it adds |
 
-## Where a plugin system would go
+## Where state lives
 
-If one arrives from upstream, these are the seams it has to touch, in
-order:
+Everything a plugin keeps is under `<data>/plugins`
+(`crates/yapfast-plugins/src/store.rs:4`):
 
-1. A page in Settings: a `Section` arm
-   (`crates/yapfast-iced/src/settings/mod.rs:78`), its entry in `GROUPS`
-   (`settings/mod.rs:140`), a module under `settings/pages/`
-   (`settings/pages/mod.rs:1`), and the page's name in the test display's
-   list (`goto.rs:140`).
-2. Its store: `layout.json`, through `crate::layout::Layout`
-   (`crates/yapfast-iced/src/layout.rs:1`) or a folder of its own beside
-   it.
-3. Anything it shows: a named part, so a theme can restyle it
-   (`crates/yapfast-core/src/themes/parts.rs:177`).
-4. Anything it does: a new `Action` in the core (`application.rs:1644`) —
-   not a call from the window into the plugin, so that the same command
-   arrives from the tray, a keybind or the test display.
+```text
+lock.json            what is installed, and which plugins are on
+grants.json          what the person allowed
+store/<sha256>/      manifest.json and plugin.wasm, content-addressed: the
+                     current version and the one a rollback returns to
+data/<id>/           a plugin's storage, and its settings.json
+cache/               the helper's compile cache; safe to delete
+```
 
-## Gotchas for an agent reading this
+A plugin's own values are `data/<id>/settings.json`, written by the
+`Store` in `crates/yapfast-plugins/src/settings.rs:1`. Nothing there runs a
+plugin: a module is hashed against the digest the lock file records before
+its path is handed to anything (`crates/yapfast-plugins/src/store.rs:15`).
 
-- A missing feature is often a **branch**, not an absence: this repository
-  carries a great deal of unmerged work on `origin/*`. Before concluding
-  something doesn't exist, run
-  `git log --all --oneline -20 --grep 'the word'` and
-  `git branch -r --contains <sha>`.
-- `main` here is older than the work: see "Which tree you are in" in
-  [INDEX.md](INDEX.md).
+## How a plugin gets installed and updated
+
+1. A source URL is read into a `Source`
+   (`crates/yapfast-plugin-host/src/fetch/url.rs:1`): a repository, a ref
+   and a folder.
+2. The app spawns the helper's `fetch`
+   (`crates/yapfast-plugins/src/installing.rs:1`). It clones shallowly with
+   gitoxide — the commit's objects and nothing behind it — and reads each
+   file straight out of the tree, so no checkout, no `core.*` setting and
+   no filter driver runs (`crates/yapfast-plugin-host/src/fetch/git.rs:1`).
+   The caps are enforced as it runs, by a watchdog and by each file's
+   object header (`fetch/git.rs:9`).
+3. The helper prints one JSON `Report`; the app turns it into a `Review`
+   and a `Package`, copies the module and the icon out of the scratch
+   directory, and writes them content-addressed under `store/<sha256>`
+   (`crates/yapfast-plugins/src/installing.rs:1`).
+4. `lock.json` records the pin — source, commit, digest — and keeps the
+   version a rollback returns to (`crates/yapfast-plugins/src/store.rs:9`).
+5. A marketplace install checks the fetched commit and the module's SHA-256
+   against the entry before anything runs, so a repository that changed
+   under its pin is refused (`crates/yapfast-plugins/src/marketplace.rs:20`).
+   The registry is a git repository and nothing else: no server, no API
+   (`marketplace.rs:4`).
+6. An update re-runs 2–4 for the same source and ref, which is why the
+   store holds two versions; a rollback is the older one again.
+
+## How a plugin API is added
+
+The API is the guest's imports, so one new call touches five places, in
+this order:
+
+1. The wire type in `crates/yapfast-plugin-api/src/guest.rs:1` (and its
+   module, such as `account.rs`, `frame.rs`, `text.rs`).
+2. The host function in `crates/yapfast-plugin-host/src/runtime/host.rs:1`,
+   with its cap from `limits.rs:1` and its permission from
+   `capability.rs:1`.
+3. The app's answer in `crates/yapfast-plugins/src/bridge/`: a
+   `session_*.rs` for what the guest asked, a `supervisor_*.rs` for what
+   the app asks back (`bridge/mod.rs:1`).
+4. The guest wrapper in each PDK that offers it, led by
+   `pdk/rust/src/lib.rs:1`.
+5. `docs/plugins/abi.md:1`, and `API_VERSION` in
+   `crates/yapfast-plugin-api/src/lib.rs:31` if a written plugin breaks.
+
+## How a plugin setting type is added
+
+1. The type in a manifest: `crates/yapfast-plugin-api/src/manifest.rs:1`.
+2. Its rules in the schema — a type Yapfast doesn't know refuses the whole
+   manifest (`crates/yapfast-plugins/src/settings.rs:6`).
+3. Its form row in `crates/yapfast-plugins/src/settings.rs:1`, and the
+   plugin's page in `crates/yapfast-plugins/src/page.rs:1`.
+4. The PDK's typed accessor (`pdk/rust/src/settings.rs:1`), and
+   `docs/plugins/settings.md:1`.
+
+## Gotchas
+
+- Two processes, one pipe: the helper is spawned and spoken to in lines
+  (`crates/yapfast-plugin-host/src/pipe.rs:1`), and a guest's work is the
+  helper's, not the app's.
+- A hook fails open: a plugin that traps, runs late or answers nonsense
+  leaves the message as it was, and only `"on_failure": "block"` (with
+  `messages.intercept`) may stop one
+  (`crates/yapfast-plugin-api/src/hook.rs:3`).
+- `HookKind::DISPATCHED` leaves out `ActivityPrePublish` on purpose, and a
+  test holds that list to `ALL` (`hook.rs:38`).
+- The app half is behind `feature = "plugins"`: a build without it has no
+  Plugins page and no tap points
+  (`crates/yapfast-iced/src/settings/mod.rs:50`).
+- A manifest is strict and its stored values are forgiving: a bad schema
+  refuses the manifest, a bad value falls back to its default
+  (`crates/yapfast-plugins/src/settings.rs:6`).
+- `yapfast-plugins` must not name the app: a type from `yapfast-core` or a
+  message appearing there is the mistake to look for
+  (`crates/yapfast-plugins/src/lib.rs:8`).
 
 ## Tests
 
-None: there is nothing to test. `crates/yapfast-iced/src/tests/settings.rs:1`
-covers the pages that do exist.
+- `crates/yapfast-plugin-host/tests/` — `fetch.rs`, `sandbox.rs`,
+  `scheduler.rs`, `e2e.rs`, `perf.rs`.
+- `crates/yapfast-plugins/src/bridge/tests/` — the bridge against a fake
+  helper, in parts.
+- `testing/plugins/` — the fixtures: `echo.wasm`, `filter.wasm`,
+  `trap.wasm`, `spin.wasm`, `hog.wasm`, `stdout.wasm`, `quiet/`,
+  `word-filter/`, `showcase/`, `widgets/`, each with its `.wat` source
+  (`testing/plugins/README.md:1`).
+- `docs/plugins/testing.md:1` says how to run them.
