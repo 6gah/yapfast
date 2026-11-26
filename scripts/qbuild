@@ -18,7 +18,8 @@ in the log.
 
 Runs in the development shell, as everything here does
 (`nix develop path:./nix --command cargo ...`), unless QBUILD_NIX=0, when
-it runs the cargo on PATH. QBUILD_PROFILE names the profile (fast).
+it runs the cargo on PATH; a machine with no nix on it gets that too, which
+is how CI runs it. QBUILD_PROFILE names the profile (fast).
 
 This clone's file mode is 0644, so the first use is `python3 scripts/qbuild`
 or `chmod +x scripts/qbuild` once.
@@ -27,6 +28,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -56,8 +58,12 @@ def arguments(arguments):
 
 
 def command(cargo_arguments):
-    """Cargo as this repository runs it."""
-    if os.environ.get('QBUILD_NIX', '1') == '0':
+    """Cargo as this repository runs it, in the shell when there is one.
+
+    A machine without Nix (CI's runner, say) has cargo on its PATH already
+    and no shell to enter, so it runs that one instead of failing.
+    """
+    if os.environ.get('QBUILD_NIX', '1') == '0' or shutil.which('nix') is None:
         return ['cargo', *cargo_arguments]
     return ['nix', 'develop', 'path:./nix', '--command', 'cargo', *cargo_arguments]
 
