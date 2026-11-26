@@ -1,19 +1,25 @@
 name: Themes on gix
 
 # This branch's check: the workspace compiles with the `fast` profile on
-# Linux and its tests run, so the shared shallow fetch and the themes that
-# use it are built somewhere. The setup is upstream's
-# (.github/workflows/ci.yml): the same runner, apt packages and profile.
-# What it prints is scripts/qbuild's summary, and each job keeps the whole
-# log as an artifact.
+# Linux and its tests run, so the shared shallow fetch is built somewhere.
+# The setup is upstream's (.github/workflows/ci.yml): the same runner, apt
+# packages and profile.
+#
+# The first step writes Cargo.lock for the crate this branch adds: neither
+# commit could run cargo, so the lock has no entry for `gix` yet. Cargo adds
+# only the missing packages — everything already pinned keeps its version —
+# and the commit goes back to this branch, so every later build is
+# `--locked` again. A run that finds the lock already complete commits
+# nothing, so this cannot loop.
 
 on:
   push:
     branches: [themes-gix]
   workflow_dispatch:
 
+# The lock-file step pushes a commit back to this branch.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,25 +31,11 @@ env:
 
 jobs:
   linux:
-    name: ${{ matrix.name }}
+    name: compile and test
     runs-on: ubuntu-26.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: compile
-            run: >-
-              python3 scripts/qbuild -- build --locked --profile fast
-              -p yapfast-git-fetch -p yapfast-core -p yapfast-iced --all-targets
-          - name: tests
-            run: >-
-              cargo nextest run --locked --cargo-profile fast
-              -p yapfast-git-fetch -p yapfast-core --no-fail-fast
     steps:
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - name: make the repository's scripts runnable
         run: chmod +x scripts/*
       - name: install native build dependencies
@@ -56,16 +48,30 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
             libpipewire-0.3-dev libdrm-dev libgbm-dev libxfixes-dev \
             libxdamage-dev libxcomposite-dev libxext-dev ffmpeg
+      # Resolving the graph adds the packages this branch's new crate needs
+      # and nothing else: an existing pin stays where it is. `cargo update -p
+      # gix --precise` can't be used, as gix is not in the lock to update.
+      - name: write Cargo.lock for the new dependencies
+        run: |
+          cargo metadata --format-version 1 > /dev/null
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already complete."
+            exit 0
+          fi
+          git diff --stat -- Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: Cargo.lock for yapfast-git-fetch"
+          git push
       - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
-        if: ${{ matrix.name == 'tests' }}
         with:
           tool: cargo-nextest@0.9.152
-      - name: ${{ matrix.name }}
-        run: ${{ matrix.run }}
-      - name: the build log
-        if: ${{ !cancelled() && matrix.name == 'compile' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: qbuild-log
-          path: .local/qbuild/*.log
-          if-no-files-found: ignore
+      - name: compile
+        run: >-
+          cargo build --locked --profile fast --message-format=short
+          -p yapfast-git-fetch -p yapfast-core -p yapfast-iced --all-targets
+      - name: test the fetch, and the core's themes
+        run: >-
+          cargo nextest run --locked --cargo-profile fast
+          -p yapfast-git-fetch -p yapfast-core --no-fail-fast
