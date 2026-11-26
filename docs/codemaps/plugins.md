@@ -11,23 +11,21 @@ and reached from the app through one pipe. Five parts:
 
 - **`crates/yapfast-plugin-api`** — the wire types and the contract: the
   manifest, the hooks, the capabilities, the guest's imports
-  (`crates/yapfast-plugin-api/src/lib.rs:1`). Serde and nothing else,
-  because both processes build it (`lib.rs:5`). A change here is an ABI
-  change; a breaking one raises `API_VERSION` (`lib.rs:31`), which is the
-  manifest's `api` field.
+  (`crates/yapfast-plugin-api/src/lib.rs:1`). Serde and nothing else, as
+  both processes build it (`lib.rs:5`). A change here is an ABI change; a
+  breaking one raises `API_VERSION` (`lib.rs:31`), the manifest's `api`.
 - **`crates/yapfast-plugin-host`** — the helper binary: the shallow fetch
   with gitoxide, the Extism sandbox, the scheduler, the pipe
   (`crates/yapfast-plugin-host/src/lib.rs:1`).
 - **`crates/yapfast-plugins`** — everything that knows about plugins and
   nothing about Yapfast: manifests into UI, settings schemas, the store,
-  the marketplace, installing, and the bridge to the helper
+  the marketplace, installing, the bridge to the helper
   (`crates/yapfast-plugins/src/lib.rs:1`). It never names the app's state,
   a message or a window; the tap points live in the core (`lib.rs:8`).
 - **`crates/yapfast-core/src/plugins/`** — the tap points and what the app
-  hands across: `state.rs:1`, `world.rs:1`, `dress.rs:1`, `audio.rs:1`,
-  `tasks.rs:1`.
-- **`pdk/`** — the plugin development kits: Rust (`pdk/rust/src/lib.rs:1`),
-  C (`pdk/c/yapfast.h:1`), Zig (`pdk/zig/src/yapfast.zig:1`), TinyGo
+  hands across (`state.rs:1`, `world.rs:1`, `dress.rs:1`, `audio.rs:1`).
+- **`pdk/`** — the kits: Rust (`pdk/rust/src/lib.rs:1`), C
+  (`pdk/c/yapfast.h:1`), Zig (`pdk/zig/src/yapfast.zig:1`), TinyGo
   (`pdk/tinygo/template/plugin.go:1`), AssemblyScript
   (`pdk/assemblyscript/assembly/index.ts:1`), each with a template and a
   `shout` example.
@@ -45,21 +43,16 @@ The app's side is a Settings section, `Section::Plugins`
 | `crates/yapfast-plugin-api/src/hook.rs:1` | The hooks a plugin intercepts, and the deadline each has |
 | `crates/yapfast-plugin-api/src/capability.rs:1` | `Capability`, `Permissions`, `HostPattern`: what a plugin may do |
 | `crates/yapfast-plugin-api/src/limits.rs:1` | Every size and count a plugin is held to |
-| `crates/yapfast-plugin-api/src/guest.rs:1` | The imports a guest calls, as the wire sees them |
 | `crates/yapfast-plugin-host/src/fetch/git.rs:1` | One plugin out of one commit: a shallow gitoxide clone, files read from the tree |
 | `crates/yapfast-plugin-host/src/fetch/url.rs:1` | `Source`: the URL a plugin is installed from, `#path=` and all |
 | `crates/yapfast-plugin-host/src/runtime/` | Extism in `module.rs`, the host functions in `host.rs`, what stays loaded in `kept.rs` |
-| `crates/yapfast-plugin-host/src/sandbox.rs:1` | What the module may reach, and the caps around it |
-| `crates/yapfast-plugin-host/src/scheduler.rs:1` | Whose turn it is, and for how long |
 | `crates/yapfast-plugin-host/src/pipe.rs:1` | The line protocol between the app and the helper |
 | `crates/yapfast-plugins/src/store.rs:1` | `<data>/plugins`: the lock file, the content-addressed store, a plugin's data |
 | `crates/yapfast-plugins/src/installing.rs:1` | The fetch's report into a review and a package the store writes |
 | `crates/yapfast-plugins/src/marketplace.rs:1` | The registry repository, its entries, and what browsing gives the page |
 | `crates/yapfast-plugins/src/settings.rs:1` | A plugin's `settings` array into a schema, its values, its form |
 | `crates/yapfast-plugins/src/permissions.rs:1` | What the person allowed, read from `grants.json` |
-| `crates/yapfast-plugins/src/tweaks.rs:1` | The switches a plugin flips in Yapfast's own behaviour |
 | `crates/yapfast-plugins/src/bridge/mod.rs:1` | The app's end of the pipe: sessions, supervision, the wire |
-| `crates/yapfast-plugins/src/ui.rs:1` | What a manifest may say about the interface it adds |
 
 ## Where state lives
 
@@ -86,25 +79,25 @@ its path is handed to anything (`crates/yapfast-plugins/src/store.rs:15`).
    (`crates/yapfast-plugin-host/src/fetch/url.rs:1`): a repository, a ref
    and a folder.
 2. The app spawns the helper's `fetch`
-   (`crates/yapfast-plugins/src/installing.rs:1`). It clones shallowly with
-   gitoxide — the commit's objects and nothing behind it — and reads each
-   file straight out of the tree, so no checkout, no `core.*` setting and
-   no filter driver runs (`crates/yapfast-plugin-host/src/fetch/git.rs:1`).
+   (`crates/yapfast-plugins/src/installing.rs:1`), which clones shallowly
+   with gitoxide — the commit's objects and nothing behind it — and reads
+   each file straight out of the tree, so no checkout, no `core.*` setting
+   and no filter driver runs (`crates/yapfast-plugin-host/src/fetch/git.rs:1`).
    The caps are enforced as it runs, by a watchdog and by each file's
    object header (`fetch/git.rs:9`).
 3. The helper prints one JSON `Report`; the app turns it into a `Review`
-   and a `Package`, copies the module and the icon out of the scratch
+   and a `Package`, copies the module and icon out of the scratch
    directory, and writes them content-addressed under `store/<sha256>`
    (`crates/yapfast-plugins/src/installing.rs:1`).
 4. `lock.json` records the pin — source, commit, digest — and keeps the
    version a rollback returns to (`crates/yapfast-plugins/src/store.rs:9`).
+   An update re-runs 2–3 for the same source and ref, which is why the
+   store holds two versions; a rollback is the older one again.
 5. A marketplace install checks the fetched commit and the module's SHA-256
    against the entry before anything runs, so a repository that changed
    under its pin is refused (`crates/yapfast-plugins/src/marketplace.rs:20`).
    The registry is a git repository and nothing else: no server, no API
    (`marketplace.rs:4`).
-6. An update re-runs 2–4 for the same source and ref, which is why the
-   store holds two versions; a rollback is the older one again.
 
 ## How a plugin API is added
 
@@ -126,13 +119,11 @@ this order:
 
 ## How a plugin setting type is added
 
-1. The type in a manifest: `crates/yapfast-plugin-api/src/manifest.rs:1`.
-2. Its rules in the schema — a type Yapfast doesn't know refuses the whole
-   manifest (`crates/yapfast-plugins/src/settings.rs:6`).
-3. Its form row in `crates/yapfast-plugins/src/settings.rs:1`, and the
-   plugin's page in `crates/yapfast-plugins/src/page.rs:1`.
-4. The PDK's typed accessor (`pdk/rust/src/settings.rs:1`), and
-   `docs/plugins/settings.md:1`.
+The type in a manifest (`crates/yapfast-plugin-api/src/manifest.rs:1`);
+its rules in the schema, where a type Yapfast doesn't know refuses the
+whole manifest (`crates/yapfast-plugins/src/settings.rs:6`); its form row
+in `crates/yapfast-plugins/src/settings.rs:1`; the PDK's typed accessor
+(`pdk/rust/src/settings.rs:1`); `docs/plugins/settings.md:1`.
 
 ## Gotchas
 
