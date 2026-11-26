@@ -53,19 +53,9 @@ pub struct Under {
 }
 
 impl Under {
-    /// The states it's in, by name, in the order they're laid: `hover +
-    /// selected`, or `rest`.
+    /// The states it's in, by name, in the order they're laid.
     pub fn states_words(&self) -> String {
-        let names: Vec<&str> = STATE_NAMES
-            .iter()
-            .filter(|(bit, _)| self.states & bit != 0)
-            .map(|(_, name)| *name)
-            .collect();
-        if names.is_empty() {
-            "rest".to_owned()
-        } else {
-            names.join(" + ")
-        }
+        states_words(self.states)
     }
 
     /// The theme rule that styled it: `parts.menu.row`, with the states
@@ -88,6 +78,57 @@ impl Under {
         }
         rules.join(", ")
     }
+}
+
+/// The states in `states`, by name, in the order they're laid: `hover +
+/// selected`, or `rest`.
+pub fn states_words(states: States) -> String {
+    let names: Vec<&str> = STATE_NAMES
+        .iter()
+        .filter(|(bit, _)| states & bit != 0)
+        .map(|(_, name)| *name)
+        .collect();
+    if names.is_empty() {
+        "rest".to_owned()
+    } else {
+        names.join(" + ")
+    }
+}
+
+/// A named part as a frame drew it, with the look that styled it: what the
+/// test display's `dump` reads the window's parts from
+/// (`crates/yapfast-iced/src/dump.rs`).
+#[derive(Clone, Copy, Debug)]
+pub struct Drawn {
+    pub name: &'static str,
+    pub states: States,
+    pub bounds: Rectangle,
+    pub look: Option<PartLook>,
+}
+
+thread_local! {
+    /// Every named part the frame being drawn records, in the order it
+    /// draws them: outermost first, an inner part's after its holder's.
+    static DRAWN: RefCell<Vec<Drawn>> = const { RefCell::new(Vec::new()) };
+    /// Whether the frame being drawn records its parts. Off, a part costs
+    /// one thread-local read as it's drawn and nothing else.
+    static COLLECTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the frame being drawn records the parts it draws.
+pub fn collecting() -> bool {
+    COLLECTING.with(Cell::get)
+}
+
+/// `draw` with every named part it draws recorded, after whatever it
+/// returns: the window's own frame, drawn headless, for `dump`.
+pub fn collected<R>(draw: impl FnOnce() -> R) -> (R, Vec<Drawn>) {
+    DRAWN.with(|drawn| drawn.borrow_mut().clear());
+    COLLECTING.with(|collecting| collecting.set(true));
+    let out = draw();
+    COLLECTING.with(|collecting| collecting.set(false));
+    let drawn = DRAWN.with(|drawn| drawn.borrow().clone());
+    (out, drawn)
 }
 
 /// The states by their name in `theme.json`, in the order they're laid.
@@ -207,6 +248,17 @@ impl<M> Hooks<M> for Tag {
         at: At,
         child: &mut dyn FnMut(&mut Renderer),
     ) {
+        // The test display's `dump` records every part it draws.
+        if collecting() {
+            DRAWN.with(|drawn| {
+                drawn.borrow_mut().push(Drawn {
+                    name: self.name,
+                    states: self.states,
+                    bounds: at.bounds,
+                    look: self.look,
+                });
+            });
+        }
         if at.cursor.is_over(at.bounds) && at.viewport.intersects(&at.bounds) {
             UNDER.with(|under| {
                 *under.borrow_mut() = Some(Under {

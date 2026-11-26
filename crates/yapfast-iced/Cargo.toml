@@ -44,6 +44,10 @@ iced = { version = "=0.14.0", default-features = false, features = ["x11", "wayl
 iced_runtime = "=0.14.0"
 # The renderer's hook for video frames (patch 13), set by `video::install`.
 iced_tiny_skia = "=0.14.1"
+# The headless simulator over the window's own view: the UI tests drive it,
+# and the private test display's `dump` reads the window through it
+# (src/dump.rs).
+iced_test = "=0.14.0"
 # Pictures' handles over the core's own bytes, without a copy.
 bytes = "1.10"
 # Messages' local dates, as the core works them out.
@@ -80,6 +84,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 png = "0.18"
 
 [dev-dependencies]
-# The headless simulator for the UI tests; see docs/client/tests.md.
-iced_test = "=0.14.0"
+# The headless simulator for the UI tests; see docs/client/tests.md. It's a
+# plain dependency too, for the test display's `dump`.
 yapfast-core = { path = "../yapfast-core", default-features = false, features = ["discord", "test-fixtures"] }

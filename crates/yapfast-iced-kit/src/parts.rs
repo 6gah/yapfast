@@ -461,8 +461,9 @@ impl Dress {
             }
             _ => content.into(),
         };
-        // `--theme-dev`'s inspector finds it; off, it's left as it is.
-        if !crate::inspect::on() {
+        // `--theme-dev`'s inspector finds it, and the test display's `dump`
+        // records it; off, it's left as it is.
+        if !crate::inspect::on() && !crate::inspect::collecting() {
             return shown;
         }
         if self.by_pointer {

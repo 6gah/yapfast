@@ -404,6 +404,33 @@ def control(method, name):
         return response.read().decode(errors='replace').strip()
 
 
+def window_command(command):
+    """A control-file command Yapfast answers in answer.txt: dump, goto, menu.
+
+    `dump` returns the window's text, which it wrote to dump.txt; the
+    others return nothing, or raise what Yapfast said went wrong.
+    """
+    answer = state / 'answer.txt'
+    answer.unlink(missing_ok=True)
+    with window_control.open('a') as window:
+        window.write(f'{command}\n')
+    deadline = time.monotonic() + 20
+    while True:
+        if answer.exists() and answer.read_text(errors='replace').strip():
+            break
+        if yapfast.poll() is not None:
+            raise RuntimeError(f'Yapfast ended; see {state / "yapfast.log"}')
+        if time.monotonic() > deadline:
+            raise RuntimeError(f'no answer to {command!r}; see {state / "yapfast.log"}')
+        time.sleep(.05)
+    text = answer.read_text(errors='replace').strip()
+    if text.startswith('error'):
+        raise RuntimeError(text.removeprefix('error').strip())
+    if command.strip() == 'dump':
+        return (state / 'dump.txt').read_text(errors='replace')
+    return ''
+
+
 def perform(command):
     verb, _, rest = command.partition(' ')
     values = rest.split()
@@ -540,6 +567,8 @@ def perform(command):
         with window_control.open('a') as window:
             window.write(f'{rest}\n')
         time.sleep(1.2)
+    elif verb in ('dump', 'goto', 'menu'):
+        return window_command(command)
     else:
         raise ValueError(f'unknown command {verb!r}')
     return ''

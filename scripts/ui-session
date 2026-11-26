@@ -68,6 +68,18 @@ do commands, run in order; the first error stops the rest:
   stage-aside PATH   adds the file to the next message of the thread beside
       the channel, as stage does to the channel's
   theme ID   chooses a theme, such as yap, sakura or custom:1, as Appearance does
+  goto TARGET   goes somewhere as the window's own controls do, and stops
+      the run when it can't: home (or dms), server NAME (or server #0,
+      counted from the first server), channel NAME (the open place's
+      first), settings/account|voice|messages|notifications|discord|
+      sounds|advanced|appearance|themes|games|keybinds|about, and
+      profile USER, opening their card
+  dump [PATH]   prints the window as text: a line per element in view,
+      indented by what holds it, with its text, where it is and the
+      theme's part and colours. PATH writes it there instead; without
+      one it's .local/ui-session/dump.txt. A long list shows its first
+      few and then how many followed. Read this instead of a screenshot
+  menu N   opens the context menu of the Nth message in the timeline
   window close|open|destroy|create|hide|show|trim|stats   acts on the window:
       close as its close button does (to the tray, or quit without one),
       open as the tray's Open Yapfast; stats writes glibc's heap to yapfast.log
@@ -175,7 +187,11 @@ def send(commands, timeout=60):
         output = json.loads(output)
         if status != 'ok':
             raise SystemExit(f'{command}: {output}')
-        print(f'{command}: {output}' if output else command)
+        # A dump is the screen's text, and prints as it is.
+        if command.split()[:1] == ['dump']:
+            print(output)
+        else:
+            print(f'{command}: {output}' if output else command)
 
 
 def zoom_level(text):

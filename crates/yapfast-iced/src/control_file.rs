@@ -9,7 +9,14 @@
 //! Yapfast), `quit`, `hide` and `show`, `stage PATH` and `stage-aside PATH`
 //! (a file for the next message), `pick KIND PATH` (a picture for a profile
 //! or a server's settings), `theme ID` (a theme, built in or custom, as
-//! Appearance chooses it).
+//! Appearance chooses it), `dump [PATH]` (the window as text, in
+//! `src/dump.rs`), `goto TARGET` (a place in the window) and `menu N` (a
+//! message's menu), the last two in `src/goto.rs`.
+//!
+//! `dump`, `goto` and `menu` answer in `answer.txt` beside this file, `ok`
+//! or `error WHY`, and `dump` writes its text to `dump.txt` there unless
+//! it's given a path: `scripts/ui-session do 'goto settings/appearance'
+//! 'dump'` reads the second one's text.
 
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
@@ -84,6 +91,12 @@ pub enum Command {
     Act(Action),
     /// Show and keep a theme, by its id.
     Theme(String),
+    /// The window as text, to this path or beside this file (`dump`).
+    Dump(Option<PathBuf>),
+    /// A place in the window (`goto`).
+    Goto(String),
+    /// A message's context menu, by its place in the timeline (`menu`).
+    Menu(usize),
     Unknown,
 }
 
@@ -107,6 +120,17 @@ pub fn parse(command: &str) -> Command {
                 Command::Act(pick(kind, PathBuf::from(path)))
             } else if let Some(id) = command.strip_prefix("theme ") {
                 Command::Theme(id.to_owned())
+            } else if command == "dump" {
+                Command::Dump(None)
+            } else if let Some(path) = command.strip_prefix("dump ") {
+                Command::Dump(Some(PathBuf::from(path)))
+            } else if let Some(target) = command.strip_prefix("goto ") {
+                Command::Goto(target.to_owned())
+            } else if let Some(number) = command.strip_prefix("menu ") {
+                match number.trim().parse() {
+                    Ok(number) => Command::Menu(number),
+                    Err(_) => Command::Unknown,
+                }
             } else {
                 Command::Unknown
             }
@@ -163,6 +187,25 @@ pub fn allocator_stats() {
     }
 }
 
+/// Where `dump` writes when it's given no path: beside the control file,
+/// which `scripts/ui-session` reads.
+pub(crate) fn dump_path() -> PathBuf {
+    path()
+        .and_then(|path| path.parent().map(|folder| folder.join("dump.txt")))
+        .unwrap_or_else(|| PathBuf::from("dump.txt"))
+}
+
+/// Says what a `dump`, `goto` or `menu` did, in `answer.txt` beside the
+/// control file, for `scripts/ui-session` to read: `ok`, or `error WHY`.
+pub(crate) fn answer(text: &str) {
+    let Some(folder) = path().and_then(|path| path.parent().map(PathBuf::from)) else {
+        return;
+    };
+    if let Err(error) = std::fs::write(folder.join("answer.txt"), format!("{text}\n")) {
+        tracing::warn!(%error, "couldn't answer the test display");
+    }
+}
+
 /// A line of the test display's control file.
 pub(crate) fn control(app: &mut App, command: &str) -> Task<Message> {
     tracing::info!(command, "test window control");
@@ -195,6 +238,34 @@ pub(crate) fn control(app: &mut App, command: &str) -> Task<Message> {
             if !app.choose_theme(&id) {
                 tracing::warn!(id, "no such theme");
             }
+        }
+        Command::Dump(path) => match crate::dump::write(app, path) {
+            Ok(path) => answer(&format!("ok {}", path.display())),
+            Err(why) => answer(&format!("error {why}")),
+        },
+        Command::Goto(target) => {
+            return match crate::goto::run(app, &target) {
+                Ok(task) => {
+                    answer("ok");
+                    task
+                }
+                Err(why) => {
+                    answer(&format!("error {why}"));
+                    Task::none()
+                }
+            };
+        }
+        Command::Menu(number) => {
+            return match crate::goto::menu(app, number) {
+                Ok(task) => {
+                    answer("ok");
+                    task
+                }
+                Err(why) => {
+                    answer(&format!("error {why}"));
+                    Task::none()
+                }
+            };
         }
         Command::Unknown => tracing::warn!(command, "unknown window control"),
     }
