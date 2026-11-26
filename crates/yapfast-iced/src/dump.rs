@@ -11,41 +11,60 @@
 //! view, and the parts from the draw that simulator makes, which
 //! [`inspect::collected`] records; `--theme-dev`'s inspector shares the
 //! same tagged parts.
+//!
+//! It sits behind the `devtools` feature, which is what brings iced_test
+//! into the window: a build without it answers that the build has no
+//! `dump`, and carries neither. `scripts/ui-session` builds with it.
 
-use std::{
-    fmt::Write as _,
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
+use crate::app::App;
+
+#[cfg(feature = "devtools")]
+use std::fmt::Write as _;
+
+#[cfg(feature = "devtools")]
 use iced::{Background, Color, Point, Rectangle, Settings};
+#[cfg(feature = "devtools")]
 use iced_test::{Simulator, selector::Candidate};
+#[cfg(feature = "devtools")]
 use yapfast_iced_kit::{
     inspect::{self, Drawn},
     parts::PartLook,
 };
 
-use crate::app::App;
-
 /// The longest text a line carries; longer texts are cut.
+#[cfg(feature = "devtools")]
 const TEXT: usize = 64;
 
 /// How many lines alike in a row show, and how few in a row count as a
 /// list to collapse.
+#[cfg(feature = "devtools")]
 const KEEP: usize = 4;
+#[cfg(feature = "devtools")]
 const RUN: usize = 8;
 
 /// The deepest a line is indented, whatever holds it.
+#[cfg(feature = "devtools")]
 const DEEPEST: usize = 12;
 
 /// Writes the window as text to `path`, or beside the control file when
 /// none is given.
+#[cfg(feature = "devtools")]
 pub fn write(app: &App, path: Option<PathBuf>) -> Result<PathBuf, String> {
     let path = path.unwrap_or_else(crate::control_file::dump_path);
     std::fs::write(&path, text(app)).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(path)
 }
 
+/// This build has no simulator, so nothing to read the window with.
+#[cfg(not(feature = "devtools"))]
+pub fn write(_: &App, _: Option<PathBuf>) -> Result<PathBuf, String> {
+    Err("this build has no `dump`: build it with --features devtools".to_owned())
+}
+
 /// The window as text.
+#[cfg(feature = "devtools")]
 pub fn text(app: &App) -> String {
     let window = Rectangle::with_size(app.shell.frame);
     let mut simulator = Simulator::with_size(Settings::default(), app.shell.frame, app.view());
@@ -108,6 +127,7 @@ pub fn text(app: &App) -> String {
 }
 
 /// An element of the window that reads something.
+#[cfg(feature = "devtools")]
 struct Row {
     depth: usize,
     kind: &'static str,
@@ -116,6 +136,7 @@ struct Row {
 }
 
 /// A line of the dump: where it's indented from, what it is, and the rest.
+#[cfg(feature = "devtools")]
 struct Line {
     depth: usize,
     head: String,
@@ -126,6 +147,7 @@ struct Line {
 
 /// That element's line: its text, its place, and the part's states and
 /// colours where a part holds it.
+#[cfg(feature = "devtools")]
 fn line(row: &Row, part: Option<&Drawn>) -> Line {
     let mut words: Vec<String> = Vec::new();
     if !row.text.is_empty() {
@@ -147,6 +169,7 @@ fn line(row: &Row, part: Option<&Drawn>) -> Line {
 }
 
 /// A part with no text in it: a tile, an avatar, a divider.
+#[cfg(feature = "devtools")]
 fn part_line(depth: usize, part: &Drawn) -> Line {
     let mut words = vec![place(part.bounds)];
     words.extend(states(part.states));
@@ -160,6 +183,7 @@ fn part_line(depth: usize, part: &Drawn) -> Line {
 }
 
 /// The element's kind and what it reads.
+#[cfg(feature = "devtools")]
 fn describe(candidate: &Candidate<'_>) -> (&'static str, String) {
     match candidate {
         Candidate::Text { content, .. } => ("text", content.to_string()),
@@ -171,6 +195,7 @@ fn describe(candidate: &Candidate<'_>) -> (&'static str, String) {
 }
 
 /// The smallest part holding `at`.
+#[cfg(feature = "devtools")]
 fn innermost<'a>(parts: &'a [Drawn], at: Point) -> Option<&'a Drawn> {
     parts
         .iter()
@@ -178,11 +203,13 @@ fn innermost<'a>(parts: &'a [Drawn], at: Point) -> Option<&'a Drawn> {
         .min_by(|a, b| area(a.bounds).total_cmp(&area(b.bounds)))
 }
 
+#[cfg(feature = "devtools")]
 fn area(bounds: Rectangle) -> f32 {
     bounds.width * bounds.height
 }
 
 /// Where the element is, rounded: x y width height.
+#[cfg(feature = "devtools")]
 fn place(bounds: Rectangle) -> String {
     format!(
         "{} {} {} {}",
@@ -193,11 +220,13 @@ fn place(bounds: Rectangle) -> String {
     )
 }
 
+#[cfg(feature = "devtools")]
 fn round(value: f32) -> i32 {
     value.round() as i32
 }
 
 /// The part's states, by name, as the inspector words them.
+#[cfg(feature = "devtools")]
 fn states(states: u8) -> Vec<String> {
     let words = inspect::states_words(states);
     if words == "rest" {
@@ -208,6 +237,7 @@ fn states(states: u8) -> Vec<String> {
 }
 
 /// The colours the theme gives the part: its ground and its ink.
+#[cfg(feature = "devtools")]
 fn colours(look: Option<&PartLook>) -> Vec<String> {
     let Some(look) = look else {
         return Vec::new();
@@ -222,6 +252,7 @@ fn colours(look: Option<&PartLook>) -> Vec<String> {
     words
 }
 
+#[cfg(feature = "devtools")]
 fn hex(colour: Color) -> String {
     let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
     let mut text = format!(
@@ -238,11 +269,13 @@ fn hex(colour: Color) -> String {
 
 /// `text` with its runs of space, tabs and newlines made one space, so an
 /// element is one line.
+#[cfg(feature = "devtools")]
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `text` cut to `limit` characters with a mark where it was cut.
+#[cfg(feature = "devtools")]
 fn elide(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_owned();
@@ -254,6 +287,7 @@ fn elide(text: &str, limit: usize) -> String {
 
 /// The lines, indented by what holds them, with a list's length counted
 /// instead of shown.
+#[cfg(feature = "devtools")]
 fn render(lines: &[Line]) -> String {
     let mut out = String::new();
     let mut index = 0;
@@ -287,6 +321,7 @@ fn render(lines: &[Line]) -> String {
     out
 }
 
+#[cfg(feature = "devtools")]
 impl Line {
     fn render(&self, out: &mut String) {
         let _ = writeln!(
@@ -300,7 +335,7 @@ impl Line {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "devtools"))]
 mod tests {
     use super::*;
 
@@ -324,7 +359,11 @@ mod tests {
         let text = render(&lines);
         assert_eq!(text.lines().count(), KEEP + 1);
         assert!(text.contains("… 8 more sidebar.channel-row"));
-        assert!(text.lines().next().is_some_and(|line| line.starts_with("  ")));
+        assert!(
+            text.lines()
+                .next()
+                .is_some_and(|line| line.starts_with("  "))
+        );
     }
 
     #[test]

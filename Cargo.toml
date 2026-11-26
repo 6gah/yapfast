@@ -48,6 +48,11 @@ workspace = true
 # The release's features: the window, with Discord. Matrix is optional beside
 # it; scripts/check --matrix checks the builds with Matrix.
 default = ["desktop", "discord"]
+# The test display's tools (`dump`) in the window, which need iced's headless
+# simulator: `cargo build -p yapfast --features devtools`, as
+# scripts/ui-session builds it. Not a default, so a build people use has
+# neither.
+devtools = ["yapfast-iced?/devtools"]
 matrix = ["yapfast-core/matrix", "yapfast-iced?/matrix"]
 # yapfast-core/default too, though it adds only discord: --workspace selects
 # yapfast-core with its default features, and without them here a plain

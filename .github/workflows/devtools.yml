@@ -1,0 +1,82 @@
+name: Dev tools
+
+# The private branch's own check: the workspace compiles with the `fast`
+# profile on Linux, the window's tests run, and the tools the test display
+# needs behind the `devtools` feature compile too. The setup is upstream's
+# (.github/workflows/ci.yml on yapfast/yapfast): the same runner, the same
+# apt packages, the same profile. What it prints is scripts/qbuild's
+# summary: each error once, at file:line, and the path of the whole log.
+
+on:
+  push:
+    branches: [private-devtools]
+  workflow_dispatch:
+
+# Least privilege: jobs only need to read the repo.
+permissions:
+  contents: read
+
+# One run per branch; a new push cancels the stale run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0 # incremental builds only bloat the CI cache
+
+jobs:
+  linux:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60 # a cold build must finish
+    strategy:
+      fail-fast: false # let both report even if one fails
+      matrix:
+        include:
+          - name: compile
+            # The default features only, so a build that puts iced_test in
+            # is caught here.
+            run: python3 scripts/qbuild -- build --locked --profile fast --workspace --all-targets
+          - name: devtools
+            # The test display's own tools (src/dump.rs), which need
+            # iced_test.
+            run: python3 scripts/qbuild -- build --locked --profile fast -p yapfast-iced --features devtools
+          - name: tests
+            run: >-
+              cargo nextest run --locked --cargo-profile fast
+              -p yapfast-iced -p yapfast-iced-kit --features devtools --no-fail-fast
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # A fresh clone gives the scripts their committed mode; this makes
+      # sure they run even if it is 0644.
+      - name: make the repository's scripts runnable
+        run: chmod +x scripts/*
+      - name: install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            nasm protobuf-compiler libasound2-dev libpulse-dev \
+            libfontconfig1-dev libfreetype6-dev libglib2.0-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libssl-dev libwayland-dev libgl1-mesa-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libpipewire-0.3-dev libdrm-dev libgbm-dev libxfixes-dev \
+            libxdamage-dev libxcomposite-dev libxext-dev
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        if: ${{ matrix.name == 'tests' }}
+        with:
+          tool: cargo-nextest@0.9.152
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
+      # Kept even when the step failed, so the errors can be read here
+      # without downloading nothing: qbuild wrote them already, and this
+      # holds the whole of cargo's own output.
+      - name: the build log
+        if: ${{ !cancelled() && matrix.name != 'tests' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbuild-log-${{ matrix.name }}
+          path: .local/qbuild/*.log
+          if-no-files-found: ignore

@@ -142,8 +142,11 @@ def build(profile, yapfast=True, tray=False, record=False):
     hosts = [*(['--bin', 'tray_host'] if tray else []), *(['--bin', 'record_host'] if record else [])]
     targets = [*(['-p', 'yapfast', '--bin', 'yapfast'] if yapfast else []),
                *(['-p', 'yapfast-test-hosts', *hosts] if hosts else [])]
+    # The test display's `dump` is behind the `devtools` feature, which is
+    # what brings iced's headless simulator into the window.
+    devtools = ['--features', 'yapfast/devtools'] if yapfast else []
     command = ['nix', 'develop', 'path:./nix', '--command', 'cargo', 'build', '--locked', '--profile', profile,
-               *targets]
+               *targets, *devtools]
     print('Building:', shlex.join(command[4:]), flush=True)
     log = STATE / 'build.log'
     result = subprocess.run(command, cwd=ROOT, stdout=log.open('wb'), stderr=subprocess.STDOUT)
