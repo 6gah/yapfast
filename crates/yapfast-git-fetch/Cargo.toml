@@ -1,0 +1,21 @@
+[package]
+name = "yapfast-git-fetch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Shallow git fetches for themes and plugins, with no checkout"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# A shallow clone of one commit, read straight out of its tree. The same
+# transport the plugin helper uses (crates/yapfast-plugin-host/src/fetch/git.rs
+# on upstream's feat/plugins), moved here so themes and plugins share it.
+gix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

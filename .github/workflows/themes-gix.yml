@@ -1,0 +1,71 @@
+name: Themes on gix
+
+# This branch's check: the workspace compiles with the `fast` profile on
+# Linux and its tests run, so the shared shallow fetch and the themes that
+# use it are built somewhere. The setup is upstream's
+# (.github/workflows/ci.yml): the same runner, apt packages and profile.
+# What it prints is scripts/qbuild's summary, and each job keeps the whole
+# log as an artifact.
+
+on:
+  push:
+    branches: [themes-gix]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: compile
+            run: >-
+              python3 scripts/qbuild -- build --locked --profile fast
+              -p yapfast-git-fetch -p yapfast-core -p yapfast-iced --all-targets
+          - name: tests
+            run: >-
+              cargo nextest run --locked --cargo-profile fast
+              -p yapfast-git-fetch -p yapfast-core --no-fail-fast
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: make the repository's scripts runnable
+        run: chmod +x scripts/*
+      - name: install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            nasm protobuf-compiler libasound2-dev libpulse-dev \
+            libfontconfig1-dev libfreetype6-dev libglib2.0-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libssl-dev libwayland-dev libgl1-mesa-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libpipewire-0.3-dev libdrm-dev libgbm-dev libxfixes-dev \
+            libxdamage-dev libxcomposite-dev libxext-dev ffmpeg
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        if: ${{ matrix.name == 'tests' }}
+        with:
+          tool: cargo-nextest@0.9.152
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
+      - name: the build log
+        if: ${{ !cancelled() && matrix.name == 'compile' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbuild-log
+          path: .local/qbuild/*.log
+          if-no-files-found: ignore
