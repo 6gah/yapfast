@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Faster development builds, opt-in: sccache, mold, and a Cranelift trial.
+
+  scripts/build-speed env              print the exports, to `eval` or read
+  scripts/build-speed build [CARGO...] build the app with them (cargo's own
+                                       arguments after --), saying which are on
+  scripts/build-speed measure          time clean, cached-fresh and one-line
+                                       edits with and without each, and the
+                                       peak memory of each build
+
+Nothing here changes a default build: the knobs are environment variables
+this script sets for the process it starts, and cargo reads them only then.
+`scripts/qbuild` and `scripts/check` keep their own defaults.
+
+What each does:
+
+  sccache   CARGO_BUILD_RUSTC_WRAPPER=sccache: every rustc call goes through
+            the cache, so a rebuild after a branch switch or a clean reuses
+            what was compiled before. It does nothing for a one-line edit.
+  mold      -C link-arg=-fuse-ld=mold: a much faster linker than GNU ld or
+            lld for the final binary; it shortens the link step of every
+            build that relinks, which is most of a small edit's time.
+  cranelift -Z codegen-backend=cranelift, which needs a nightly toolchain
+            with the rustc_codegen_cranelift component: NOT on by default,
+            and this script refuses to turn it on when it isn't installed.
+            `env --cranelift` and `build --cranelift` opt in for one run.
+
+Run these in the development shell, as everything here is run
+(`nix develop path:./nix --command ...`). The profile is `fast` unless
+QBUILD_PROFILE or a cargo argument says otherwise.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PROFILE = os.environ.get('QBUILD_PROFILE', 'fast')
+TARGETS = ['yapfast', 'yapfast-iced', 'yapfast-iced-kit', 'yapfast-core']
+# The file an edit changes, and how many lines of it are replaced.
+EDITED = 'crates/yapfast-iced/src/dump.rs'
+
+
+def cargo():
+    """Cargo, in the development shell as the rest of this repository runs it."""
+    if os.environ.get('QBUILD_NIX', '1') == '0':
+        return ['cargo']
+    return ['nix', 'develop', 'path:./nix', '--command', 'cargo']
+
+
+def have(tool):
+    return shutil.which(tool) is not None
+
+
+def cranelift():
+    """Whether this machine has the Cranelift backend, and why not when it doesn't."""
+    if not have('rustup'):
+        return False, 'no rustup, so no nightly with rustc_codegen_cranelift'
+    found = subprocess.run(['rustup', 'component', 'list', '--installed', '--toolchain', 'nightly'],
+                           capture_output=True, text=True)
+    if found.returncode != 0:
+        return False, 'no nightly toolchain installed (rustup toolchain install nightly)'
+    if 'rustc_codegen_cranelift' not in found.stdout:
+        return False, 'nightly lacks rustc_codegen_cranelift (rustup component add --toolchain nightly)'
+    return True, ''
+
+
+def knobs(sccache, mold, cranelift_backend):
+    """The environment a build runs with, and what it can't do."""
+    environment = dict(os.environ)
+    notes = []
+    if sccache:
+        if have('sccache'):
+            environment['CARGO_BUILD_RUSTC_WRAPPER'] = 'sccache'
+        else:
+            notes.append('sccache is not installed; building without it')
+    if mold:
+        if have('mold'):
+            target = environment.get('CARGO_BUILD_TARGET', 'x86_64-unknown-linux-gnu')
+            key = 'CARGO_TARGET_' + target.upper().replace('-', '_') + '_RUSTFLAGS'
+            flags = environment.get(key, '')
+            environment[key] = (flags + ' -C link-arg=-fuse-ld=mold').strip()
+        else:
+            notes.append('mold is not installed; linking as before')
+    if cranelift_backend:
+        possible, why = cranelift()
+        if possible:
+            environment['RUSTC_BOOTSTRAP'] = '1'
+            environment['CARGO_PROFILE_FAST_CODEGEN_BACKEND'] = 'cranelift'
+        else:
+            notes.append(f'Cranelift left off: {why}')
+    return environment, notes
+
+
+def build_command(arguments):
+    return [*cargo(), *arguments]
+
+
+def default_arguments():
+    return ['build', '--locked', '--profile', PROFILE]
+
+
+class Watch:
+    """The biggest memory the build's processes held together, while it ran."""
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.peak = 0
+        self.stop = threading.Event()
+
+    def tree(self):
+        """The PID and everything under it."""
+        pids = {self.pid}
+        children = {}
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / 'stat').read_text().split(') ', 1)[1].split()
+                parent = int(fields[1])
+            except (OSError, IndexError, ValueError):
+                continue
+            children.setdefault(parent, []).append(int(entry.name))
+        growing = True
+        while growing:
+            growing = False
+            for pid in list(pids):
+                for child in children.get(pid, []):
+                    if child not in pids:
+                        pids.add(child)
+                        growing = True
+        return pids
+
+    def sample(self):
+        held = 0
+        for pid in self.tree():
+            try:
+                for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+                    if line.startswith('VmRSS:'):
+                        held += int(line.split()[1])
+                        break
+            except OSError:
+                continue
+        return held
+
+    def run(self):
+        while not self.stop.wait(.2):
+            self.peak = max(self.peak, self.sample())
+
+
+def timed(environment, arguments):
+    """Runs one cargo invocation: whether it worked, how long, and its peak MiB."""
+    started = time.monotonic()
+    running = subprocess.Popen(build_command(arguments), cwd=ROOT, env=environment,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    watch = Watch(running.pid)
+    thread = threading.Thread(target=watch.run, daemon=True)
+    thread.start()
+    status = running.wait()
+    seconds = time.monotonic() - started
+    watch.stop.set()
+    thread.join(1)
+    return status == 0, seconds, round(watch.peak / 1024)
+
+
+def clean(arguments):
+    """Takes away the crates this repository builds, keeping the dependencies."""
+    subprocess.run([*cargo(), 'clean', *[word for target in TARGETS for word in ('-p', target)]],
+                   cwd=ROOT, check=True)
+
+
+def edit():
+    """Replaces one line of EDITED, and restores it: a one-line edit's rebuild."""
+    path = ROOT / EDITED
+    original = path.read_text()
+    lines = original.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.strip().startswith('//') or not line.strip():
+            continue
+        lines[index] = line.replace(' ', '  ', 1) if '  ' not in line else line.replace('  ', ' ', 1)
+        break
+    path.write_text(''.join(lines))
+    try:
+        yield
+    finally:
+        path.write_text(original)
+
+
+def scenarios():
+    """The three builds whose time and memory are compared."""
+    yield 'cached-fresh', lambda: None
+    yield 'one-line-edit', edit
+    yield 'clean', lambda: clean(default_arguments())
+
+
+def measure(configurations):
+    """Every configuration against every scenario, as the numbers measured."""
+    results = []
+    for name, sccache, mold, backend in configurations:
+        environment, notes = knobs(sccache, mold, backend)
+        for scenario, prepare in scenarios():
+            prepared = prepare()
+            if hasattr(prepared, '__enter__'):
+                prepared.__enter__()
+            try:
+                ok, seconds, peak = timed(environment, default_arguments())
+            finally:
+                if hasattr(prepared, '__exit__'):
+                    prepared.__exit__(None, None, None)
+            results.append({
+                'configuration': name,
+                'scenario': scenario,
+                'ok': ok,
+                'seconds': round(seconds, 1),
+                'peak_mib': peak,
+                'notes': notes,
+            })
+            print(f"{name:14} {scenario:14} {'ok' if ok else 'failed':6} "
+                  f"{seconds:7.1f} s {peak:6} MiB", flush=True)
+    return results
+
+
+def configurations(backend):
+    return [
+        ('plain', False, False, False),
+        ('sccache', True, False, False),
+        ('mold', False, True, False),
+        ('sccache+mold', True, True, False),
+        *(('cranelift', False, False, True) if backend else []),
+    ]
+
+
+def main(arguments):
+    backend = '--cranelift' in arguments
+    arguments = [word for word in arguments if word != '--cranelift']
+    action, _, rest = (arguments[0] if arguments else 'env').partition(' ')
+    if action == 'env':
+        environment, notes = knobs(True, True, backend)
+        for name in ('CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_PROFILE_FAST_CODEGEN_BACKEND', 'RUSTC_BOOTSTRAP'):
+            if name in environment and name not in os.environ:
+                print(f'export {name}={environment[name]}')
+        for name, value in environment.items():
+            if name.startswith('CARGO_TARGET_') and name.endswith('_RUSTFLAGS') and value != os.environ.get(name):
+                print(f'export {name}="{value}"')
+        for note in notes:
+            print(f'# {note}', file=sys.stderr)
+        return 0
+    if action == 'build':
+        cargo_arguments = rest.split() if rest else default_arguments()
+        environment, notes = knobs(True, True, backend)
+        for note in notes:
+            print(f'build-speed: {note}', file=sys.stderr)
+        print('build-speed:', ' '.join(build_command(cargo_arguments)), file=sys.stderr)
+        return subprocess.run(build_command(cargo_arguments), cwd=ROOT, env=environment).returncode
+    if action == 'measure':
+        results = measure(configurations(backend))
+        out = ROOT / '.local/build-speed/results.json'
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(results, indent=2) + '\n')
+        print(f'build-speed: the numbers are in {out.relative_to(ROOT)}')
+        return 0 if all(one['ok'] for one in results) else 1
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
