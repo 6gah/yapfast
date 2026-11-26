@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yapfast logo</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #0a0a0b;
+    overflow: hidden;
+  }
+  /* The stage is always 1080x1080 and scaled to fit, so every measurement
+     below is in the composition's own pixels. */
+  #stage {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1080px;
+    height: 1080px;
+    transform-origin: 50% 50%;
+    transform: translate(-50%, -50%) scale(1);
+    background: #0a0a0b;
+  }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .glow { filter: blur(10px); }
+
+  /* The intro's fake chat: bubbles rising in a column, faster and faster. */
+  #chat { position: absolute; inset: 0; overflow: hidden; }
+  .bubble {
+    position: absolute;
+    left: 50%;
+    width: 380px;
+    margin-left: -190px;
+    padding: 18px 22px;
+    border-radius: 26px;
+    background: #1a1a1d;
+    color: #6b6b72;
+    font: 22px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    will-change: transform, opacity;
+  }
+  .bubble.mine { background: #241d0c; color: #7a6433; }
+
+  #flash {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #lines { position: absolute; inset: 0; overflow: visible; }
+  .speedline {
+    position: absolute;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, rgba(255,191,71,0), #ffbf47);
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <svg id="logo" viewBox="12 12 78 78" aria-label="Yapfast">
+    <!-- The burst's outline, drawn on by the bullets' trails. -->
+    <path id="trail-glow" fill="none" stroke="#ffbf47" stroke-width="9"
+          stroke-linejoin="round" stroke-linecap="round" opacity="0.35" class="glow"></path>
+    <path id="trail" fill="none" stroke="#ffbf47" stroke-width="3"
+          stroke-linejoin="round" stroke-linecap="round"></path>
+
+    <!-- The burst itself: empty until it slams full of yellow. -->
+    <path id="shape" fill="#ffbf47" fill-opacity="0" stroke="#ffbf47"
+          stroke-width="3" stroke-linejoin="round"></path>
+
+    <!-- The three dots: bullets in flight, then the face. -->
+    <g id="bullets">
+      <circle class="bullet" r="5" fill="#ffbf47"></circle>
+      <circle class="bullet" r="5" fill="#ffbf47"></circle>
+      <circle class="bullet" r="5" fill="#ffbf47"></circle>
+    </g>
+    <g id="face" opacity="0">
+      <circle cx="38" cy="51" r="5" fill="#1d1607"></circle>
+      <circle cx="51" cy="51" r="5" fill="#1d1607"></circle>
+      <circle cx="64" cy="51" r="5" fill="#1d1607"></circle>
+    </g>
+  </svg>
+
+  <div id="chat"></div>
+  <div id="lines"></div>
+  <div id="flash"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // The burst's 19 corners, in the order they were written, so the bullets
+  // trace the outline the way it was drawn.
+  var CORNERS = [
+    [50, 14], [58, 27], [73, 19], [72, 35], [88, 38], [77, 50], [87, 62],
+    [71, 64], [69, 78], [56, 71], [38, 88], [40, 71], [26, 74], [30, 60],
+    [14, 52], [27, 43], [18, 29], [35, 31], [37, 17]
+  ];
+  var SHAPE_PATH =
+    'M50,14 L58,27 L73,19 L72,35 L88,38 L77,50 L87,62 L71,64 L69,78 L56,71 ' +
+    'L38,88 L40,71 L26,74 L30,60 L14,52 L27,43 L18,29 L35,31 L37,17 Z';
+  var DOTS = [[38, 51], [51, 51], [64, 51]];
+  var LOOP = 3.5; // seconds, the whole animation
+
+  // How long each part of the loop takes, in seconds.
+  var INTRO = 1.0;    // chat, smear, sucked in, two frames of nothing
+  var TRACE = 1.4;    // the bullets ricochet round the outline
+  var SLAM = 0.3;     // fill, flash, shake, speed lines, dots snap in
+  var HOLD = LOOP - INTRO - TRACE - SLAM;
+
+  var stage = document.getElementById('stage');
+  var chat = document.getElementById('chat');
+  var lines = document.getElementById('lines');
+  var flash = document.getElementById('flash');
+  var trail = document.getElementById('trail');
+  var trailGlow = document.getElementById('trail-glow');
+  var shape = document.getElementById('shape');
+  var bullets = Array.prototype.slice.call(document.querySelectorAll('.bullet'));
+  var face = document.getElementById('face');
+
+  trail.setAttribute('d', SHAPE_PATH);
+  trailGlow.setAttribute('d', SHAPE_PATH);
+  shape.setAttribute('d', SHAPE_PATH);
+
+  // The outline's own length, so a trail is revealed in the drawing's order
+  // however the path is written.
+  var TOTAL = trail.getTotalLength();
+  trail.style.strokeDasharray = TOTAL;
+  trailGlow.style.strokeDasharray = TOTAL;
+
+  // The corners as distances along that path, so a bullet stops exactly on
+  // one: there is no floating-point incline to drift on.
+  var stops = [0];
+  for (var i = 1; i <= CORNERS.length; i++) {
+    var a = CORNERS[i - 1];
+    var b = CORNERS[i % CORNERS.length];
+    stops.push(stops[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  var PERIMETER = stops[stops.length - 1];
+
+  /** The point `distance` along the outline, and how far round it is. */
+  function at(distance) {
+    var d = Math.max(0, Math.min(distance, PERIMETER));
+    for (var s = 1; s < stops.length; s++) {
+      if (d <= stops[s] || s === stops.length - 1) {
+        var a = CORNERS[s - 1];
+        var b = CORNERS[s % CORNERS.length];
+        var along = (d - stops[s - 1]) / (stops[s] - stops[s - 1] || 1);
+        return [a[0] + (b[0] - a[0]) * along, a[1] + (b[1] - a[1]) * along, s - 1];
+      }
+    }
+    return [CORNERS[0][0], CORNERS[0][1], 0];
+  }
+
+  /** Where round the outline the trace has drawn to, 0 to 1. */
+  var traced = { value: 0 };
+
+  function drawTrail(fraction) {
+    var offset = TOTAL * (1 - Math.max(0, Math.min(fraction, 1)));
+    trail.style.strokeDashoffset = offset;
+    trailGlow.style.strokeDashoffset = offset;
+  }
+  drawTrail(0);
+
+  /** The bullets at `fraction` round the outline: each a little behind the
+      last, so they chase rather than overlap. A bullet sits exactly on a
+      corner whenever the one ahead does. */
+  function placeBullets(fraction) {
+    var lead = PERIMETER * fraction;
+    // The gaps are two corners' worth, so a bullet lands on a corner too.
+    var gaps = [0, PERIMETER * 2 / CORNERS.length, PERIMETER * 4 / CORNERS.length];
+    for (var b = 0; b < bullets.length; b++) {
+      var d = lead - gaps[b];
+      if (d < 0) { // Not fired yet: out of sight, past the first corner.
+        bullets[b].setAttribute('opacity', 0);
+        continue;
+      }
+      var here = at(d);
+      bullets[b].setAttribute('opacity', 1);
+      bullets[b].setAttribute('cx', here[0]);
+      bullets[b].setAttribute('cy', here[1]);
+      // A squash at each corner: the bullet is on it, not through it.
+      var into = (d - stops[here[2]]) / (stops[here[2] + 1] - stops[here[2]] || 1);
+      var squash = 1 + 0.45 * Math.pow(1 - into, 4);
+      bullets[b].setAttribute('r', 5 * squash);
+      bullets[b].setAttribute('fill', into < 0.35 ? '#fff6dd' : '#ffbf47');
+    }
+  }
+
+  // The fake chat: bubbles that rise, speed up and smear into streaks.
+  var SAID = [
+    'hey, are you around?',
+    'one sec, building',
+    'it compiled',
+    'no way',
+    'ship it',
+    'ship it',
+    'ship it',
+    'shipping it'
+  ];
+  var bubbles = SAID.map(function (text, n) {
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble' + (n % 2 ? ' mine' : '');
+    bubble.textContent = text;
+    bubble.style.top = '1100px';
+    chat.appendChild(bubble);
+    return bubble;
+  });
+
+  // Speed lines: short strokes that fly out from the middle at the slam.
+  var speedlines = [];
+  for (var s = 0; s < 10; s++) {
+    var line = document.createElement('div');
+    line.className = 'speedline';
+    lines.appendChild(line);
+    speedlines.push(line);
+  }
+
+  /** The boil: every corner nudged a little, twelve times a second. */
+  var BOIL_MS = 1000 / 12;
+  var boiling = null;
+  var lastBoil = 0;
+
+  function boil(time) {
+    if (!boiling || time - lastBoil < BOIL_MS) return;
+    lastBoil = time;
+    var jittered = CORNERS.map(function (point, n) {
+      var x = point[0] + (Math.random() - 0.5) * 1.6;
+      var y = point[1] + (Math.random() - 0.5) * 1.6;
+      return (n === 0 ? 'M' : 'L') + x.toFixed(2) + ',' + y.toFixed(2);
+    });
+    var d = jittered.join(' ') + ' Z';
+    shape.setAttribute('d', d);
+    trail.setAttribute('d', d);
+    trailGlow.setAttribute('d', d);
+  }
+
+  if (!window.gsap) {
+    // No network: still show the logo, still and finished.
+    drawTrail(1);
+    shape.setAttribute('fill-opacity', 1);
+    face.setAttribute('opacity', 1);
+    bullets.forEach(function (bullet) { bullet.setAttribute('opacity', 0); });
+    bubbles.forEach(function (bubble) { bubble.style.display = 'none'; });
+    return;
+  }
+
+  gsap.registerEase('hurry', function (p) { return p * p * p; });
+
+  var timeline = gsap.timeline({ repeat: -1, defaults: { ease: 'none' } });
+
+  // ---- 1. The intro: chat, faster and faster, into the middle. ----
+  bubbles.forEach(function (bubble, n) {
+    var start = n * 0.055;
+    timeline.fromTo(bubble,
+      { y: 0, opacity: 0, scaleY: 1, scaleX: 1 },
+      { opacity: 1, duration: 0.1, ease: 'power2.out' }, start);
+    timeline.to(bubble,
+      { y: -1250, duration: 0.75, ease: 'hurry' }, start);
+  });
+
+  // The last of them smear: stretched into streaks as the pile speeds up.
+  timeline.to(bubbles.map(function (bubble) { return bubble; }), {
+    scaleY: 5.5,
+    scaleX: 0.55,
+    opacity: 0.5,
+    duration: INTRO * 0.42,
+    ease: 'power3.in'
+  }, INTRO * 0.5);
+
+  // Everything is sucked into the middle and gone.
+  timeline.to(chat, {
+    scale: 0.02,
+    opacity: 0,
+    duration: INTRO * 0.3,
+    ease: 'power4.in'
+  }, INTRO * 0.66);
+
+  // Two frames of nothing: not empty for long enough to read as a pause.
+  timeline.set({}, {}, 0.98);
+
+  // ---- 2. The ricochet: the outline, corner by corner. ----
+  var traceAt = INTRO;
+  timeline.to(traced, {
+    value: 1,
+    duration: TRACE,
+    ease: 'power1.inOut',
+    onUpdate: function () {
+      drawTrail(traced.value);
+      placeBullets(traced.value);
+    }
+  }, traceAt);
+
+  // The three fire in from off screen first.
+  bullets.forEach(function (bullet, n) {
+    var from = [[-40, -30], [130, -40], [-50, 140]][n];
+    timeline.set(bullet, { attr: { cx: from[0], cy: from[1], r: 7 }, opacity: 1 },
+      traceAt + n * 0.02);
+  });
+
+  // ---- 3. The slam. ----
+  var slamAt = INTRO + TRACE;
+  // The bullets snap onto the face's three places as the shape fills.
+  bullets.forEach(function (bullet, n) {
+    timeline.to(bullet, {
+      attr: { cx: DOTS[n][0], cy: DOTS[n][1], r: 5 },
+      fill: '#1d1607',
+      duration: 0.1,
+      ease: 'power3.in'
+    }, slamAt);
+  });
+
+  timeline.to(shape, {
+    attr: { 'fill-opacity': 1 },
+    duration: 0.14,
+    ease: 'back.out(3)' // a slight overshoot: past full, then back
+  }, slamAt + 0.02);
+
+  // One frame of white.
+  timeline.set(flash, { opacity: 0.85 }, slamAt + 0.16);
+  timeline.to(flash, { opacity: 0, duration: 0.05 }, slamAt + 0.175);
+
+  // Three frames of shake, a few pixels each way.
+  timeline.to(stage, { x: -7, y: 4, duration: 0.016 }, slamAt + 0.17);
+  timeline.to(stage, { x: 6, y: -5, duration: 0.016 }, slamAt + 0.186);
+  timeline.to(stage, { x: 0, y: 0, duration: 0.016 }, slamAt + 0.202);
+
+  // The speed lines, out from the middle and gone.
+  speedlines.forEach(function (line, n) {
+    var side = n % 2 ? 1 : -1;
+    var height = 160 + (n * 53) % 520;
+    timeline.set(line, {
+      top: height + 'px',
+      left: '540px',
+      width: (120 + (n * 37) % 200) + 'px',
+      x: side * 40,
+      opacity: 0.9,
+      scaleX: 0.4
+    }, slamAt + 0.17);
+    timeline.to(line, {
+      x: side * (300 + (n * 61) % 260),
+      scaleX: 1.6,
+      opacity: 0,
+      duration: 0.12
+    }, slamAt + 0.17);
+  });
+
+  timeline.to(face, { opacity: 1, duration: 0.08 }, slamAt + 0.2);
+
+  // ---- 4. The hold: the spikes boil, twelve times a second. ----
+  timeline.call(function () { boiling = true; }, null, slamAt + 0.3);
+  timeline.call(function () { boiling = false; }, null, LOOP - 0.02);
+  // Back to the rest shape for the next loop's first frame.
+  timeline.call(function () {
+    shape.setAttribute('d', SHAPE_PATH);
+    trail.setAttribute('d', SHAPE_PATH);
+    trailGlow.setAttribute('d', SHAPE_PATH);
+  }, null, LOOP - 0.01);
+
+  gsap.ticker.add(function (time) { boil(time * 1000); });
+
+  // The slack at the end keeps the loop a hair under the beat.
+  timeline.to({}, { duration: 0.001 }, LOOP);
+
+  // Every loop starts again from nothing.
+  timeline.eventCallback('onRepeat', function () {
+    traced.value = 0;
+    drawTrail(0);
+    placeBullets(0);
+    shape.setAttribute('d', SHAPE_PATH);
+    shape.setAttribute('fill-opacity', 0);
+    face.setAttribute('opacity', 0);
+    gsap.set(stage, { x: 0, y: 0 });
+    gsap.set(flash, { opacity: 0 });
+    bubbles.forEach(function (bubble) {
+      gsap.set(bubble, { y: 0, opacity: 0, scaleX: 1, scaleY: 1 });
+    });
+    gsap.set(chat, { scale: 1, opacity: 1 });
+    speedlines.forEach(function (line) { gsap.set(line, { opacity: 0 }); });
+    bullets.forEach(function (bullet) {
+      bullet.setAttribute('fill', '#ffbf47');
+      bullet.setAttribute('r', 5);
+    });
+  });
+
+  // ---- Fitting the screen, and the two switches. ----
+  function fit() {
+    var scale = Math.min(window.innerWidth, window.innerHeight) / 1080;
+    stage.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  var params = new URLSearchParams(location.search);
+
+  // ?slow: a quarter speed, for watching it closely.
+  if (params.has('slow')) timeline.timeScale(0.25);
+
+  // ?t=SECONDS: frozen at that moment. Seeking with callbacks off keeps it a
+  // picture rather than a paused tween, and the few things that only exist
+  // while a callback runs (the boil) are set here from `t` itself.
+  if (params.has('t')) {
+    var wanted = parseFloat(params.get('t'));
+    if (isFinite(wanted)) {
+      var t = ((wanted % LOOP) + LOOP) % LOOP;
+      timeline.pause();
+      timeline.seek(t, false);
+      var tracedBy = Math.max(0, Math.min(1, (t - traceAt) / TRACE));
+      traced.value = tracedBy;
+      drawTrail(tracedBy);
+      placeBullets(tracedBy);
+      if (t < slamAt) {
+        shape.setAttribute('fill-opacity', 0);
+        face.setAttribute('opacity', 0);
+      } else if (t < slamAt + 0.3) {
+        // Mid-slam: the fill is on its way, the face not yet.
+        shape.setAttribute('fill-opacity', Math.min(1, (t - slamAt) / 0.14));
+        face.setAttribute('opacity', 0);
+      } else {
+        shape.setAttribute('fill-opacity', 1);
+        face.setAttribute('opacity', 1);
+        // One boil, so a frozen hold looks like the hold rather than its
+        // first frame.
+        boiling = true;
+        boil(performance.now());
+        boiling = false;
+      }
+      // A frozen picture shows no intro bubble and no speed line that the
+      // seek has already faded out; the seek left those alone, so they go.
+      if (t >= INTRO) {
+        bubbles.forEach(function (bubble) { bubble.style.display = 'none'; });
+        gsap.set(chat, { opacity: 0 });
+      }
+      if (t >= slamAt + 0.3) {
+        speedlines.forEach(function (line) { gsap.set(line, { opacity: 0 }); });
+      }
+    }
+  }
+})();
+</script>
+</body>
+</html>
