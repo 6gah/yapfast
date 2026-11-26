@@ -41,9 +41,14 @@ STATE = ROOT / '.local/qbuild'
 HEAD = re.compile(r'^(?P<level>error|warning)(?:\[(?P<code>[A-Za-z]+\d+)\])?: (?P<message>.*)$')
 # "  --> src/main.rs:10:5", and "-->" without the caret column.
 PLACE = re.compile(r'^\s+-->\s+(?P<file>[^\s:]+):(?P<line>\d+)(?::(?P<column>\d+))?$')
+# Colours cargo may write even when nothing asks it to, as CI sets
+# CARGO_TERM_COLOR=always; the lines are read without them.
+ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
 # How many lines of a diagnostic's text are kept, and how long each may be.
 DETAIL = 2
 WIDTH = 200
+# How much of a log that gave no diagnostic is shown when a build fails.
+TAIL = 15
 
 
 def arguments(arguments):
@@ -73,6 +78,7 @@ def diagnostics(text):
     found = []
     current = None
     for line in text.splitlines():
+        line = ANSI.sub('', line)
         head = HEAD.match(line)
         # A "help:" or "note:" line hangs off the diagnostic above it; one
         # at the left margin with no diagnostic before it starts its own.
@@ -185,7 +191,11 @@ def main():
     ended = 'ok' if ok else 'failed'
     print(f"qbuild: {ended} in {seconds:.1f} s, {told} (whole output: {relative})")
     if not ok and not errors:
-        print(f"qbuild: cargo said nothing about it; the end of {relative} says why")
+        # Cargo failed without a diagnostic of its own to give — a feature
+        # that isn't there, a locked file — so the log's end says why.
+        print(f"qbuild: cargo gave no diagnostic; the end of {relative} is:")
+        for line in text.splitlines()[-TAIL:]:
+            print(f"    {line}")
     return 0 if ok else 1
 
 

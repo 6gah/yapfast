@@ -43,9 +43,14 @@ jobs:
             # iced_test.
             run: python3 scripts/qbuild -- build --locked --profile fast -p yapfast-iced --features devtools
           - name: tests
+            # The window's tests. `--features devtools` is the window crate's
+            # feature, so only that crate is named: naming a second package
+            # would ask it for a feature it doesn't have. iced_test reaches
+            # the tests from dev-dependencies either way; the feature is what
+            # makes src/dump.rs compile its tests too.
             run: >-
               cargo nextest run --locked --cargo-profile fast
-              -p yapfast-iced -p yapfast-iced-kit --features devtools --no-fail-fast
+              -p yapfast-iced --features devtools --no-fail-fast
     steps:
       - uses: actions/checkout@v7
         with:

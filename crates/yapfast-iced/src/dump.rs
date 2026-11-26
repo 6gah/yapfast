@@ -121,8 +121,13 @@ pub fn text(app: &App) -> String {
             .count();
         lines.push(part_line(depth, part));
     }
-    // Top to bottom, then left to right, as the window reads.
-    lines.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+    // Top to bottom, then left to right, as the window reads. `Point` has
+    // no order of its own, so its two numbers are the key.
+    lines.sort_by(|a, b| {
+        (a.at.y, a.at.x)
+            .partial_cmp(&(b.at.y, b.at.x))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     render(&lines)
 }
 
