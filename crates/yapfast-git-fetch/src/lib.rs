@@ -143,54 +143,6 @@ impl Snapshot {
             kind => Err(not_a_file(&relative, kind)),
         }
     }
-
-    /// Every file below the folder that `wanted` takes, by its path there, at
-    /// most `most` files.
-    ///
-    /// A file too large for `cap` is refused by name rather than skipped, so
-    /// a caller that names a file in its manifest hears why it isn't there.
-    pub fn files(
-        &self,
-        wanted: impl Fn(&Path) -> bool,
-        cap: Cap,
-        most: usize,
-    ) -> anyhow::Result<std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>> {
-        let mut kept = std::collections::BTreeMap::new();
-        let mut pending = vec![(self.root, std::path::PathBuf::new(), 0usize)];
-        while let Some((tree, prefix, depth)) = pending.pop() {
-            let tree = self.repo.find_tree(tree)?;
-            for entry in tree.iter() {
-                let entry = entry?;
-                let name = entry.filename().to_str().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "`{}` has a name that isn't UTF-8, so it can't be read",
-                        prefix.display()
-                    )
-                })?;
-                let relative = prefix.join(name);
-                let shown = relative.display().to_string();
-                match entry.mode().kind() {
-                    EntryKind::Tree => {
-                        if depth >= MAX_DEPTH {
-                            bail!("`{shown}` is nested deeper than {MAX_DEPTH} directories");
-                        }
-                        pending.push((entry.object_id(), relative, depth + 1));
-                    }
-                    EntryKind::Blob | EntryKind::BlobExecutable if wanted(&relative) => {
-                        kept.insert(
-                            relative.clone(),
-                            read_blob(&self.repo, entry.object_id(), &shown, cap)?,
-                        );
-                        if kept.len() > most {
-                            bail!("`{shown}` is one file more than the {most} a theme may name");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(kept)
-    }
 }
 
 /// The commit a remote's ref is at now, without keeping anything: a shallow
@@ -312,12 +264,11 @@ fn clone(source: &Source, destination: &Path) -> anyhow::Result<()> {
         None => prepare,
     };
     let interrupt = AtomicBool::new(false);
-    let (mut checkout, _outcome) = prepare
+    // The fetched repository is left on disk for the opener to read; nothing
+    // here checks it out.
+    let _ = prepare
         .fetch_only(gix::progress::Discard, &interrupt)
-        .map_err(|error| {
-            anyhow::anyhow!("`{}` couldn't be fetched: {error}", source.repo)
-        })?;
-    let _ = checkout;
+        .map_err(|error| anyhow::anyhow!("`{}` couldn't be fetched: {error}", source.repo))?;
     Ok(())
 }
 
