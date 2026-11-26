@@ -7,7 +7,7 @@ exist on `private-devtools`. Paths are as that branch has them.
 ## What it is
 
 A plugin is a WebAssembly module plus a manifest, run in a helper process
-and reached from the app through one pipe. Five parts:
+and reached from the app through one pipe. Four parts:
 
 - **`crates/yapfast-plugin-api`** — the wire types and the contract: the
   manifest, the hooks, the capabilities, the guest's imports
@@ -21,14 +21,13 @@ and reached from the app through one pipe. Five parts:
   nothing about Yapfast: manifests into UI, settings schemas, the store,
   the marketplace, installing, the bridge to the helper
   (`crates/yapfast-plugins/src/lib.rs:1`). It never names the app's state,
-  a message or a window; the tap points live in the core (`lib.rs:8`).
-- **`crates/yapfast-core/src/plugins/`** — the tap points and what the app
-  hands across (`state.rs:1`, `world.rs:1`, `dress.rs:1`, `audio.rs:1`).
+  a message or a window; the tap points are `crates/yapfast-core/src/plugins/`
+  (`state.rs:1`, `world.rs:1`, `dress.rs:1`).
 - **`pdk/`** — the kits: Rust (`pdk/rust/src/lib.rs:1`), C
   (`pdk/c/yapfast.h:1`), Zig (`pdk/zig/src/yapfast.zig:1`), TinyGo
   (`pdk/tinygo/template/plugin.go:1`), AssemblyScript
-  (`pdk/assemblyscript/assembly/index.ts:1`), each with a template and a
-  `shout` example.
+  (`pdk/assemblyscript/assembly/index.ts:1`), with a template and a `shout`
+  example each.
 
 The app's side is a Settings section, `Section::Plugins`
 (`crates/yapfast-iced/src/settings/mod.rs:88`), with its page
@@ -74,7 +73,6 @@ plugin: a module is hashed against the digest the lock file records before
 its path is handed to anything (`crates/yapfast-plugins/src/store.rs:15`).
 
 ## How a plugin gets installed and updated
-
 1. A source URL is read into a `Source`
    (`crates/yapfast-plugin-host/src/fetch/url.rs:1`): a repository, a ref
    and a folder.
@@ -101,21 +99,16 @@ its path is handed to anything (`crates/yapfast-plugins/src/store.rs:15`).
 
 ## How a plugin API is added
 
-The API is the guest's imports, so one new call touches five places, in
-this order:
-
-1. The wire type in `crates/yapfast-plugin-api/src/guest.rs:1` (and its
-   module, such as `account.rs`, `frame.rs`, `text.rs`).
-2. The host function in `crates/yapfast-plugin-host/src/runtime/host.rs:1`,
-   with its cap from `limits.rs:1` and its permission from
-   `capability.rs:1`.
-3. The app's answer in `crates/yapfast-plugins/src/bridge/`: a
-   `session_*.rs` for what the guest asked, a `supervisor_*.rs` for what
-   the app asks back (`bridge/mod.rs:1`).
-4. The guest wrapper in each PDK that offers it, led by
-   `pdk/rust/src/lib.rs:1`.
-5. `docs/plugins/abi.md:1`, and `API_VERSION` in
-   `crates/yapfast-plugin-api/src/lib.rs:31` if a written plugin breaks.
+The API is the guest's imports, so one call touches, in order: its wire
+type in `crates/yapfast-plugin-api/src/guest.rs:1` (and its module, such
+as `account.rs` or `frame.rs`); its host function in
+`crates/yapfast-plugin-host/src/runtime/host.rs:1`, with its cap from
+`limits.rs:1` and its permission from `capability.rs:1`; the app's answer
+in `crates/yapfast-plugins/src/bridge/` — a `session_*.rs` for what the
+guest asked, a `supervisor_*.rs` for what the app asks back
+(`bridge/mod.rs:1`); the guest wrapper in each PDK that offers it, led by
+`pdk/rust/src/lib.rs:1`; and `docs/plugins/abi.md:1`, with `API_VERSION`
+(`crates/yapfast-plugin-api/src/lib.rs:31`) if a written plugin breaks.
 
 ## How a plugin setting type is added
 
@@ -136,9 +129,6 @@ in `crates/yapfast-plugins/src/settings.rs:1`; the PDK's typed accessor
   (`crates/yapfast-plugin-api/src/hook.rs:3`).
 - `HookKind::DISPATCHED` leaves out `ActivityPrePublish` on purpose, and a
   test holds that list to `ALL` (`hook.rs:38`).
-- The app half is behind `feature = "plugins"`: a build without it has no
-  Plugins page and no tap points
-  (`crates/yapfast-iced/src/settings/mod.rs:50`).
 - A manifest is strict and its stored values are forgiving: a bad schema
   refuses the manifest, a bad value falls back to its default
   (`crates/yapfast-plugins/src/settings.rs:6`).
